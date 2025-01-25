@@ -8,4 +8,3 @@
 \f0\fs24 \cf0 web: gunicorn app:app\
 \
 \
-README.md}
