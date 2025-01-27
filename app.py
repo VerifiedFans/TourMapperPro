@@ -24,4 +24,9 @@ def start_process():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True) @app.route('/')
+def index():
+    print("Current Working Directory:", os.getcwd())
+    print("Templates Folder Exists:", os.path.isdir("templates"))
+    print("Templates Contents:", os.listdir("templates"))
+    return render_template('index.html')
