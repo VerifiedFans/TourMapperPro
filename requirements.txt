@@ -3,3 +3,4 @@ requests
 simplekml
 yagmail
 zipfile36
+gunicorn
