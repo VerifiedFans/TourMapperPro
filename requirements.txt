@@ -4,3 +4,6 @@ simplekml
 yagmail
 zipfile36
 gunicorn
+git add requirements.txt
+git commit -m "Add Gunicorn to requirements"
+git push heroku main
