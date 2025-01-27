@@ -15,6 +15,13 @@ def index():
 def start_process():
     artist_url = request.form.get('artist_url')
     email = request.form.get('email', 'troyburnsfamily@gmail.com')
+
+    # Validate form data
+    if not artist_url:
+        return jsonify({'status': 'error', 'message': 'Artist URL is required'}), 400
+    if not email:
+        return jsonify({'status': 'error', 'message': 'Email is required'}), 400
+
     try:
         # Simulated process (replace with actual logic)
         return jsonify({
@@ -25,6 +32,5 @@ def start_process():
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
-
 if __name__ == '__main__':
     app.run(debug=True)
