@@ -4,5 +4,4 @@ simplekml
 yagmail
 zipfile36
 gunicorn
-git add requirements.txt
-git push heroku main
+
