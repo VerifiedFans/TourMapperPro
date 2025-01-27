@@ -16,21 +16,33 @@ def start_process():
     artist_url = request.form.get('artist_url')
     email = request.form.get('email', 'troyburnsfamily@gmail.com')
 
-    # Validate form data
     if not artist_url:
         return jsonify({'status': 'error', 'message': 'Artist URL is required'}), 400
     if not email:
         return jsonify({'status': 'error', 'message': 'Email is required'}), 400
 
     try:
-        # Simulated process (replace with actual logic)
+        # Fetch all past events with pagination
+        past_events = fetch_past_dates_with_pagination(artist_url)
+
+        # Prepare email content
+        events_list = "\n".join([f"{event['venue']['name']} - {event['datetime']}" for event in past_events])
+        body = f"Here are the past events:\n\n{events_list}"
+
+        # Send the email (ensure send_email is defined)
+        send_email(email, "TourMapper Pro - Past Events", body)
+
         return jsonify({
+            'status': 'success',
+            'message': 'Process completed successfully!',
+            'events': past_events
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
             'status': 'success',
             'message': 'Process completed successfully!',
             'artist_url': artist_url,
             'email': email
-        })
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+     
 if __name__ == '__main__':
     app.run(debug=True)
