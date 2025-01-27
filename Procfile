@@ -1,1 +1,1 @@
-web: gunicorn TourMapperPro:app
+web: gunicorn app:app
