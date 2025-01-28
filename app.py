@@ -1,106 +1,117 @@
 import os
 import json
+import time
 from flask import Flask, render_template, request, jsonify
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import yagmail
 import simplekml
-from werkzeug.utils import secure_filename
+from googlemaps import Client as GoogleMapsClient
 
 app = Flask(__name__)
-URLS_FILE = "urls.json"
 
-# Ensure the URL file exists
-if not os.path.exists(URLS_FILE):
-    with open(URLS_FILE, 'w') as f:
-        json.dump([], f)
+# Google Maps API client
+gmaps = GoogleMapsClient(key=os.getenv("GOOGLE_MAPS_API_KEY"))
 
-@app.route('/')
+# List to hold URLs dynamically
+url_storage = []
+
+@app.route("/")
 def index():
-    """Render the index page with URL management options."""
-    return render_template('index.html')
+    """Render the home page."""
+    return render_template("index.html")
 
-@app.route('/get-urls', methods=['GET'])
-def get_urls():
-    """Return the list of URLs."""
-    try:
-        with open(URLS_FILE, 'r') as f:
-            urls = json.load(f)
-        return jsonify({"status": "success", "urls": urls})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
-
-@app.route('/add-url', methods=['POST'])
-def add_url():
-    """Add a new URL."""
-    url = request.form.get('url')
-    if not url:
-        return jsonify({"status": "error", "message": "No URL provided."})
-    
-    try:
-        with open(URLS_FILE, 'r') as f:
-            urls = json.load(f)
-        if url in urls:
-            return jsonify({"status": "error", "message": "URL already exists."})
-        urls.append(url)
-        with open(URLS_FILE, 'w') as f:
-            json.dump(urls, f)
-        return jsonify({"status": "success", "message": "URL added successfully."})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
-
-@app.route('/delete-url', methods=['POST'])
-def delete_url():
-    """Delete a URL."""
-    url = request.form.get('url')
-    if not url:
-        return jsonify({"status": "error", "message": "No URL provided."})
-    
-    try:
-        with open(URLS_FILE, 'r') as f:
-            urls = json.load(f)
-        if url not in urls:
-            return jsonify({"status": "error", "message": "URL not found."})
-        urls.remove(url)
-        with open(URLS_FILE, 'w') as f:
-            json.dump(urls, f)
-        return jsonify({"status": "success", "message": "URL deleted successfully."})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
-
-@app.route('/upload-urls', methods=['POST'])
+@app.route("/upload-urls", methods=["POST"])
 def upload_urls():
-    """Upload a JSON file of URLs."""
-    if 'file' not in request.files:
-        return jsonify({"status": "error", "message": "No file uploaded."})
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"status": "error", "message": "No file selected."})
-    if file and file.filename.endswith('.json'):
+    """Receive and store URLs."""
+    data = request.get_json()
+    urls = data.get("urls", [])
+    if not urls:
+        return jsonify({"status": "error", "message": "No URLs provided."})
+    url_storage.extend(urls)
+    return jsonify({"status": "success", "message": f"{len(urls)} URLs uploaded successfully."})
+
+@app.route("/process", methods=["POST"])
+def process_urls():
+    """Process the stored URLs."""
+    if not url_storage:
+        return jsonify({"status": "error", "message": "No URLs to process."})
+
+    all_event_data = []
+
+    # Configure Selenium WebDriver
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    driver_path = os.getenv("CHROMEDRIVER_PATH", "/app/.chromedriver/bin/chromedriver")
+
+    for url in url_storage:
         try:
-            file_path = secure_filename(file.filename)
-            file.save(file_path)
-            with open(file_path, 'r') as f:
-                urls = json.load(f)
-            if not isinstance(urls, list):
-                return jsonify({"status": "error", "message": "Invalid file format. Must be a list of URLs."})
-            with open(URLS_FILE, 'w') as f:
-                json.dump(urls, f)
-            os.remove(file_path)
-            return jsonify({"status": "success", "message": "URLs uploaded successfully."})
+            browser = webdriver.Chrome(driver_path, options=chrome_options)
+            browser.get(url)
+
+            # Locate and scrape event data
+            events = []
+            while True:
+                time.sleep(2)  # Allow page to load
+                event_elements = browser.find_elements(By.CSS_SELECTOR, ".event")
+                for event in event_elements:
+                    try:
+                        date = event.find_element(By.CSS_SELECTOR, ".event-date").text
+                        venue = event.find_element(By.CSS_SELECTOR, ".event-venue").text
+                        location = event.find_element(By.CSS_SELECTOR, ".event-location").text
+
+                        # Geocode location using Google Maps API
+                        geocode_result = gmaps.geocode(location)
+                        if geocode_result:
+                            lat = geocode_result[0]["geometry"]["location"]["lat"]
+                            lng = geocode_result[0]["geometry"]["location"]["lng"]
+                        else:
+                            lat, lng = None, None
+
+                        events.append({"date": date, "venue": venue, "location": location, "lat": lat, "lng": lng})
+                    except Exception as e:
+                        print(f"Error extracting event data: {e}")
+
+                # Check for pagination
+                show_more_button = browser.find_elements(By.LINK_TEXT, "Show More Dates")
+                if show_more_button:
+                    show_more_button[0].click()
+                    time.sleep(2)
+                else:
+                    break
+
+            all_event_data.extend(events)
+            browser.quit()
+
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
-    else:
-        return jsonify({"status": "error", "message": "Invalid file type. Please upload a .json file."})
+            print(f"Error processing URL {url}: {e}")
 
-@app.route('/scrape', methods=['POST'])
-def scrape():
-    """Scrape all URLs for data."""
-    # This function retains the previous scraping functionality
-    pass  # Insert the scraping logic here as needed
+    if not all_event_data:
+        return jsonify({"status": "success", "message": "No events found."})
 
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
+    # Generate KML and GeoJSON
+    kml = simplekml.Kml()
+    geojson = {"type": "FeatureCollection", "features": []}
+    for event in all_event_data:
+        if event["lat"] and event["lng"]:
+            kml.newpoint(name=event["venue"], description=event["date"], coords=[(event["lng"], event["lat"])])
+            geojson["features"].append({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [event["lng"], event["lat"]]},
+                "properties": {"date": event["date"], "venue": event["venue"], "location": event["location"]},
+            })
+
+    kml_file = "events.kml"
+    geojson_file = "events.geojson"
+    kml.save(kml_file)
+    with open(geojson_file, "w") as geojson_fp:
+        json.dump(geojson, geojson_fp)
+
+    return jsonify({"status": "success", "message": "Processing complete. Files generated.", "data": all_event_data})
+
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
