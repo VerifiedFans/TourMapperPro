@@ -12,7 +12,6 @@ app = Flask(__name__)
 
 @app.route('/')
 def index():
-    # Debugging output to verify the templates folder
     print("Current Working Directory:", os.getcwd())
     print("Templates Folder Exists:", os.path.isdir("templates"))
     print("Templates Contents:", os.listdir("templates"))
@@ -23,15 +22,14 @@ def start_process():
     artist_url = request.form.get('artist_url')
     email = request.form.get('email', 'your-default-email@example.com')
 
-    # Validate input
     if not artist_url:
         return jsonify({'status': 'error', 'message': 'Artist URL is required'}), 400
     if not email:
         return jsonify({'status': 'error', 'message': 'Email is required'}), 400
 
     try:
-        # Fetch all past events
-        past_events = fetch_past_dates_with_pagination(artist_url)
+        # Scrape past event dates and URLs
+        past_events = fetch_past_event_dates_and_urls(artist_url)
 
         if not past_events:
             return jsonify({
@@ -40,80 +38,86 @@ def start_process():
                 'events': []
             })
 
-        # Optionally, email results (function not shown here)
-        # send_email(email, "TourMapper Pro - Past Events", past_events)
+        # Optionally: Fetch additional details using event URLs
+        detailed_events = fetch_event_details_from_urls(past_events)
 
+        # Return detailed event data
         return jsonify({
             'status': 'success',
             'message': 'Process completed successfully!',
-            'events': past_events
+            'events': detailed_events
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-def fetch_past_dates_with_pagination(artist_url):
+def fetch_past_event_dates_and_urls(artist_url):
     """
-    Fetch all past tour dates from Bandsintown using Selenium to interact with "Show More Dates."
+    Fetch all past event dates and their URLs from the artist's page.
     """
-    # Initialize Selenium WebDriver
     options = webdriver.ChromeOptions()
-    options.add_argument("--headless")  # Run in headless mode
+    options.add_argument("--headless")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     driver = webdriver.Chrome(options=options)
 
-    past_events = []
-    
+    event_data = []
+
     try:
-        # Open the artist's past events page
         driver.get(f"{artist_url}?date=past")
         wait = WebDriverWait(driver, 10)
 
-        # Loop through pagination until "Show More Dates" is no longer visible
         while True:
             try:
-                # Wait for the "Show More Dates" button and click it
+                # Click "Show More Dates" button if available
                 show_more_button = wait.until(
                     EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Show More Dates')]"))
                 )
                 show_more_button.click()
-                time.sleep(2)  # Allow time for the new events to load
-            except Exception as e:
-                print("No more 'Show More Dates' button found:", e)
-                break
+                time.sleep(2)
+            except Exception:
+                break  # Exit loop if no more "Show More Dates" button is found
 
-        # After all events are loaded, parse the page content with BeautifulSoup
+        # Parse the loaded HTML
         soup = BeautifulSoup(driver.page_source, "html.parser")
-        past_events = extract_events_from_html(soup)
-    
-    except Exception as e:
-        print("Error during scraping:", e)
+        event_cards = soup.find_all("a", class_="event-link")  # Update selector as needed
+
+        for card in event_cards:
+            try:
+                date = card.find("div", class_="event-date").get_text(strip=True)
+                url = card["href"]  # Extract event URL
+                event_data.append({"date": date, "url": url})
+            except AttributeError:
+                continue  # Skip incomplete cards
     finally:
         driver.quit()
 
-    return past_events
+    return event_data
 
-def extract_events_from_html(soup):
+def fetch_event_details_from_urls(events):
     """
-    Extract event details (venue name, date, etc.) from the page content.
+    Fetch additional details for each event using its URL.
     """
-    events = []
-    event_cards = soup.find_all("div", class_="event-card")  # Update this selector as needed
-    for card in event_cards:
+    detailed_events = []
+
+    for event in events:
         try:
-            venue_name = card.find("div", class_="venue-name").get_text(strip=True)
-            event_date = card.find("div", class_="event-date").get_text(strip=True)
-            event_address = card.find("div", class_="venue-address").get_text(strip=True)
-            events.append({
-                "venue_name": venue_name,
-                "event_date": event_date,
-                "event_address": event_address,
-            })
-        except AttributeError:
-            # Skip incomplete cards
-            continue
-    return events
+            response = requests.get(event['url'])
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, "html.parser")
+                venue_name = soup.find("div", class_="venue-name").get_text(strip=True)
+                address = soup.find("div", class_="venue-address").get_text(strip=True)
+
+                # Update the event data with details
+                event['venue_name'] = venue_name
+                event['address'] = address
+                detailed_events.append(event)
+            else:
+                print(f"Failed to fetch details for {event['url']}")
+        except Exception as e:
+            print(f"Error fetching details for {event['url']}: {e}")
+
+    return detailed_events
 
 if __name__ == '__main__':
     app.run(debug=True)
