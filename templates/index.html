@@ -3,43 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>URL Manager</title>
+    <title>URL Uploader</title>
 </head>
 <body>
-    <h1>URL Management</h1>
-    <form id="add-url-form">
-        <input type="text" id="url" name="url" placeholder="Enter URL" required>
-        <button type="submit">Add URL</button>
+    <h1>Upload Venue URLs</h1>
+    <form id="urlForm" method="POST" action="/upload-urls">
+        <textarea name="urls" id="urls" rows="10" cols="50" placeholder="Paste multiple URLs, one per line"></textarea>
+        <br>
+        <button type="submit">Upload URLs</button>
     </form>
-    <h2>Uploaded URLs</h2>
-    <ul id="url-list"></ul>
+    <p id="status"></p>
     <script>
-        async function fetchUrls() {
-            const response = await fetch('/get-urls');
-            const data = await response.json();
-            const urlList = document.getElementById('url-list');
-            urlList.innerHTML = '';
-            data.urls.forEach(url => {
-                const li = document.createElement('li');
-                li.textContent = url;
-                urlList.appendChild(li);
-            });
-        }
-
-        document.getElementById('add-url-form').addEventListener('submit', async (e) => {
+        document.getElementById("urlForm").onsubmit = async (e) => {
             e.preventDefault();
-            const url = document.getElementById('url').value;
-            const response = await fetch('/add-url', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams({ url })
+            const urls = document.getElementById("urls").value.trim();
+            if (!urls) {
+                document.getElementById("status").textContent = "Please paste URLs!";
+                return;
+            }
+            const response = await fetch("/upload-urls", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ urls: urls.split("\n") }),
             });
-            const result = await response.json();
-            alert(result.message);
-            fetchUrls();
-        });
-
-        fetchUrls();
+            const data = await response.json();
+            document.getElementById("status").textContent = data.message;
+        };
     </script>
 </body>
 </html>
