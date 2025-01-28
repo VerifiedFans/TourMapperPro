@@ -15,15 +15,19 @@ app = Flask(__name__)
 @app.route('/')
 def index():
     """Render the home page."""
-    print("Current Working Directory:", os.getcwd())
-    print("Templates Folder Exists:", os.path.exists("templates"))
-    print("Templates Contents:", os.listdir("templates"))
+    try:
+        print("Current Working Directory:", os.getcwd())
+        print("Templates Folder Exists:", os.path.exists("templates"))
+        print("Templates Contents:", os.listdir("templates"))
+    except Exception as e:
+        print(f"Error accessing templates folder: {e}")
     return render_template('index.html')
 
 @app.route('/start', methods=['POST'])
 def start():
     """Start scraping for past events."""
     try:
+        # Parse request data
         data = request.get_json()
         artist_url = data.get('artist_url')
         if not artist_url:
@@ -38,9 +42,10 @@ def start():
         driver_path = os.getenv('CHROMEDRIVER_PATH', '/app/.chromedriver/bin/chromedriver')
         browser = webdriver.Chrome(driver_path, options=chrome_options)
 
+        # Open the artist's page
         browser.get(artist_url)
 
-        # Locate and click "Past" link
+        # Locate and click the "Past" button
         try:
             past_button = WebDriverWait(browser, 10).until(
                 EC.element_to_be_clickable((By.LINK_TEXT, "Past"))
@@ -70,7 +75,7 @@ def start():
                     except Exception as e:
                         print(f"Error extracting event data: {e}")
 
-                # Check for pagination
+                # Check for pagination (Show More Dates button)
                 show_more_button = browser.find_elements(By.LINK_TEXT, "Show More Dates")
                 if show_more_button:
                     show_more_button[0].click()
@@ -87,7 +92,7 @@ def start():
         if not events:
             return json.dumps({"status": "success", "message": "No past events found for this artist.", "events": []})
 
-        # Generate KML and GeoJSON
+        # Generate KML and GeoJSON files
         kml = simplekml.Kml()
         for event in events:
             kml.newpoint(name=event['venue'], description=event['date'], coords=[(0, 0)])  # Replace with actual coords if available
@@ -95,9 +100,18 @@ def start():
         kml_file = "events.kml"
         kml.save(kml_file)
 
-        # Send email
-        yag = yagmail.SMTP(os.getenv('EMAIL_USER'), os.getenv('EMAIL_PASS'))
-        yag.send(to='troyburnsfamily@gmail.com', subject='Event Data', contents='See attached.', attachments=[kml_file])
+        # Send email with the KML file
+        try:
+            yag = yagmail.SMTP(os.getenv('EMAIL_USER'), os.getenv('EMAIL_PASS'))
+            yag.send(
+                to='troyburnsfamily@gmail.com',
+                subject='Event Data',
+                contents='See attached KML file with event data.',
+                attachments=[kml_file]
+            )
+        except Exception as e:
+            print(f"Error sending email: {e}")
+            return json.dumps({"status": "error", "message": "Failed to send email."})
 
         return json.dumps({"status": "success", "message": "Scraping completed successfully.", "events": events})
 
