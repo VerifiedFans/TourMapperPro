@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from yagmail import SMTP
+import os  # Importing os for directory checks
 
 app = Flask(__name__)
 
