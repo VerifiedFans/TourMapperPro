@@ -6,6 +6,7 @@ import simplekml
 import googlemaps
 from flask import Flask, render_template, request, jsonify
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -78,7 +79,8 @@ def start_scraping():
         chrome_options.add_argument("--disable-dev-shm-usage")
 
         driver_path = os.getenv("CHROMEDRIVER_PATH", "/app/.chromedriver/bin/chromedriver")
-        browser = webdriver.Chrome(executable_path=driver_path, options=chrome_options)
+        service = Service(driver_path)
+        browser = webdriver.Chrome(service=service, options=chrome_options)
 
         events = []
         for url in urls:
