@@ -1,8 +1,9 @@
 import os
 import time
 import json
-import yagmail
+import requests
 import simplekml
+import yagmail
 import googlemaps
 from flask import Flask, render_template, request, jsonify
 from selenium import webdriver
@@ -14,7 +15,8 @@ from selenium.webdriver.support import expected_conditions as EC
 app = Flask(__name__)
 
 # Initialize Google Maps API
-gmaps = googlemaps.Client(key=os.getenv('GOOGLE_MAPS_API_KEY'))
+GOOGLE_MAPS_API_KEY = os.getenv('GOOGLE_MAPS_API_KEY')  # Ensure API Key is set in Heroku
+gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
 
 @app.route('/')
 def index():
@@ -23,104 +25,151 @@ def index():
 
 @app.route('/upload_urls', methods=['POST'])
 def upload_urls():
-    """Upload and store URLs."""
+    """Upload multiple URLs."""
     try:
-        urls = request.get_json().get('urls', [])
-        if not urls:
-            return jsonify({"status": "error", "message": "No URLs provided"}), 400
+        urls = request.json.get('urls')
+        if not urls or not isinstance(urls, list):
+            return jsonify({"status": "error", "message": "Invalid URL list"}), 400
         
-        with open("urls.txt", "w") as f:
-            f.write("\n".join(urls))
+        with open("urls.txt", "a") as file:
+            for url in urls:
+                file.write(url + "\n")
         
-        return jsonify({"status": "success", "message": "URLs saved successfully"})
+        return jsonify({"status": "success", "message": "URLs successfully uploaded!"})
+    
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/view_urls', methods=['GET'])
+def view_urls():
+    """Fetch and return stored URLs."""
+    try:
+        if os.path.exists("urls.txt"):
+            with open("urls.txt", "r") as f:
+                urls = f.read().splitlines()
+            return jsonify({"status": "success", "urls": urls})
+        else:
+            return jsonify({"status": "error", "message": "No URLs found"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
+@app.route('/clear_urls', methods=['POST'])
+def clear_urls():
+    """Delete all stored URLs."""
+    try:
+        if os.path.exists("urls.txt"):
+            os.remove("urls.txt")
+            return jsonify({"status": "success", "message": "URLs cleared successfully"})
+        else:
+            return jsonify({"status": "error", "message": "No URLs found"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/start_scraping', methods=['POST'])
 def start_scraping():
-    """Scrape venue data from uploaded URLs."""
+    """Scrape the event details from uploaded URLs."""
     try:
-        # Load URLs from file
-        with open("urls.txt", "r") as f:
-            urls = f.read().splitlines()
-
+        # Load URLs
+        if not os.path.exists("urls.txt"):
+            return jsonify({"status": "error", "message": "No URLs found"}), 400
+        
+        with open("urls.txt", "r") as file:
+            urls = file.read().splitlines()
+        
         if not urls:
-            return jsonify({"status": "error", "message": "No URLs found"})
-
+            return jsonify({"status": "error", "message": "No URLs available for scraping"}), 400
+        
         # Configure Selenium WebDriver
         chrome_options = Options()
         chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
+        
         driver_path = os.getenv('CHROMEDRIVER_PATH', '/app/.chromedriver/bin/chromedriver')
-        browser = webdriver.Chrome(driver_path, options=chrome_options)
-
+        browser = webdriver.Chrome(options=chrome_options)
+        
         events = []
+
         for url in urls:
             browser.get(url)
-            time.sleep(2)  # Allow page to load
-
+            time.sleep(3)  # Allow page to load
+            
             try:
-                event_date = browser.find_element(By.CSS_SELECTOR, 'h2.EfW1v6YNlQnbyB7fUHmR').text
-                venue_name = browser.find_element(By.CSS_SELECTOR, 'a.q1Vlsw1cdclAUZ4gBvAn').text
-                city_state_element = browser.find_element(By.CSS_SELECTOR, 'a[href*="bandsintown.com/c/"]')
-                city_state = city_state_element.text
-                zip_code = city_state_element.find_element(By.XPATH, './following-sibling::div').text
-                address = browser.find_element(By.XPATH, '//*[text()="Address"]/following-sibling::div').text
-
-                # Separate city and state
-                city, state = city_state.split(", ")
-                
-                # Geocode using Google Maps API
-                full_address = f"{address}, {city}, {state} {zip_code}"
-                geocode_result = gmaps.geocode(full_address)
-                if geocode_result:
-                    lat = geocode_result[0]['geometry']['location']['lat']
-                    lng = geocode_result[0]['geometry']['location']['lng']
-                else:
-                    lat, lng = None, None
-
-                # Store event data
                 event_data = {
-                    "date": event_date,
-                    "venue": venue_name,
-                    "address": address,
-                    "city": city,
-                    "state": state,
-                    "zip": zip_code,
-                    "latitude": lat,
-                    "longitude": lng
+                    "date": browser.find_element(By.CSS_SELECTOR, "h2.EfW1v6YNlQnbyB7fUHmR").text,
+                    "venue": browser.find_element(By.CSS_SELECTOR, "a.q1Vlsw1cdclAUZ4gBvAn").text,
+                    "address": browser.find_element(By.CSS_SELECTOR, "div").text,  # Modify if needed
+                    "city_state": browser.find_element(By.CSS_SELECTOR, "a[href*='/c/']").text,
+                    "zip": browser.find_element(By.CSS_SELECTOR, "div > a[href*='/c/']").text.split()[-1],
+                    "url": url
                 }
+                
+                # Get latitude & longitude from Google Maps API
+                full_address = f"{event_data['address']}, {event_data['city_state']} {event_data['zip']}"
+                geocode_result = gmaps.geocode(full_address)
+                
+                if geocode_result:
+                    location = geocode_result[0]['geometry']['location']
+                    event_data["latitude"] = location["lat"]
+                    event_data["longitude"] = location["lng"]
+                
                 events.append(event_data)
+            
             except Exception as e:
                 print(f"Error scraping {url}: {e}")
-                continue
-
+        
         browser.quit()
 
         if not events:
-            return jsonify({"status": "error", "message": "No valid event data found"})
+            return jsonify({"status": "error", "message": "No valid event data found."})
 
-        # Generate KML file
+        # Generate KML & GeoJSON
         kml = simplekml.Kml()
+        geojson_data = {"type": "FeatureCollection", "features": []}
+
         for event in events:
-            if event["latitude"] and event["longitude"]:
+            if "latitude" in event and "longitude" in event:
                 kml.newpoint(
-                    name=event["venue"],
-                    description=f"{event['date']}, {event['address']}, {event['city']}, {event['state']} {event['zip']}",
+                    name=event["venue"], 
+                    description=f"{event['date']} - {event['address']}, {event['city_state']} {event['zip']}",
                     coords=[(event["longitude"], event["latitude"])]
                 )
 
+                geojson_data["features"].append({
+                    "type": "Feature",
+                    "properties": {
+                        "name": event["venue"],
+                        "date": event["date"],
+                        "address": event["address"],
+                        "city_state": event["city_state"],
+                        "zip": event["zip"],
+                    },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [event["longitude"], event["latitude"]]
+                    }
+                })
+
         kml_file = "events.kml"
+        geojson_file = "events.geojson"
         kml.save(kml_file)
 
-        # Send email
-        yag = yagmail.SMTP(os.getenv('EMAIL_USER'), os.getenv('EMAIL_PASS'))
-        yag.send(to='troyburnsfamily@gmail.com', subject='Event Data', contents='See attached.', attachments=[kml_file])
+        with open(geojson_file, "w") as f:
+            json.dump(geojson_data, f)
 
-        return jsonify({"status": "success", "message": "Scraping completed successfully.", "events": events})
+        # Send email with attachments
+        yag = yagmail.SMTP(os.getenv('EMAIL_USER'), os.getenv('EMAIL_PASS'))
+        yag.send(
+            to='troyburnsfamily@gmail.com',
+            subject='Event Data Files',
+            contents='Attached are the event data files.',
+            attachments=[kml_file, geojson_file]
+        )
+
+        return jsonify({"status": "success", "message": "Scraping completed successfully!", "events": events})
 
     except Exception as e:
+        print(f"Unhandled error: {e}")
         return jsonify({"status": "error", "message": str(e)})
 
 if __name__ == '__main__':
