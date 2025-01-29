@@ -1,9 +1,8 @@
-
 import os
 import time
 import json
 import logging
-from flask import Flask, render_template, request, send_from_directory, jsonify
+from flask import Flask, render_template, request, send_file, jsonify
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -13,6 +12,7 @@ from selenium.webdriver.chrome.service import Service
 import yagmail
 import simplekml
 import googlemaps
+import io
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -30,11 +30,6 @@ if not EMAIL_USER or not EMAIL_PASS:
 
 # Store URLs permanently
 URL_FILE = "urls.txt"
-STATIC_DIR = "static"
-
-# Ensure static directory exists
-if not os.path.exists(STATIC_DIR):
-    os.makedirs(STATIC_DIR)
 
 @app.route('/')
 def index():
@@ -172,13 +167,18 @@ def start_scraping():
             except Exception as e:
                 logging.error(f"❌ Geocoding error: {e}")
 
-        # Save KML & GeoJSON in STATIC_DIR
-        kml_file = os.path.join(STATIC_DIR, "events.kml")
-        geojson_file = os.path.join(STATIC_DIR, "events.geojson")
+        # Save files to memory instead of disk
+        kml_output = io.BytesIO()
+        kml.save(kml_output)
+        kml_output.seek(0)
 
-        kml.save(kml_file)
-        with open(geojson_file, "w") as f:
-            json.dump(geojson_data, f)
+        geojson_output = io.BytesIO()
+        geojson_output.write(json.dumps(geojson_data).encode('utf-8'))
+        geojson_output.seek(0)
+
+        # Store files in global variables for download
+        global kml_file, geojson_file
+        kml_file, geojson_file = kml_output, geojson_output
 
         return jsonify({
             "status": "success",
@@ -195,18 +195,16 @@ def start_scraping():
 @app.route('/download_kml')
 def download_kml():
     """Download KML file."""
-    file_path = os.path.join(STATIC_DIR, "events.kml")
-    if not os.path.exists(file_path):
-        return jsonify({"status": "error", "message": "KML file not found!"}), 404
-    return send_from_directory(STATIC_DIR, "events.kml", as_attachment=True)
+    if kml_file:
+        return send_file(kml_file, mimetype='application/vnd.google-earth.kml+xml', as_attachment=True, download_name="events.kml")
+    return jsonify({"status": "error", "message": "KML file not found!"}), 404
 
 @app.route('/download_geojson')
 def download_geojson():
     """Download GeoJSON file."""
-    file_path = os.path.join(STATIC_DIR, "events.geojson")
-    if not os.path.exists(file_path):
-        return jsonify({"status": "error", "message": "GeoJSON file not found!"}), 404
-    return send_from_directory(STATIC_DIR, "events.geojson", as_attachment=True)
+    if geojson_file:
+        return send_file(geojson_file, mimetype='application/json', as_attachment=True, download_name="events.geojson")
+    return jsonify({"status": "error", "message": "GeoJSON file not found!"}), 404
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
