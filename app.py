@@ -23,7 +23,7 @@ chrome_options.add_argument("--headless")
 chrome_options.add_argument("--no-sandbox")
 chrome_options.add_argument("--disable-dev-shm-usage")
 
-# Global WebDriver session (Optimized)
+# Create a WebDriver session (Minimizing memory usage)
 driver = webdriver.Chrome(options=chrome_options)
 
 
@@ -84,7 +84,8 @@ def start_scraping():
                 events.append(event_data)
 
             except Exception as e:
-                print(f"Error scraping {url}: {e}")
+                print(f"⚠️ Error scraping {url}: {e}")
+                continue  # Skip to next URL
 
         if not events:
             return json.dumps({"status": "error", "message": "No valid event data found."}), 400
@@ -110,4 +111,58 @@ def start_scraping():
                     "coordinates": [event["lng"], event["lat"]],
                 },
             })
+
+        # Save files
+        os.makedirs("static", exist_ok=True)
+        kml.save("static/events.kml")
+        with open("static/events.geojson", "w") as geojson_file:
+            json.dump(geojson_data, geojson_file)
+
+        # Send Email with KML file
+        try:
+            email_user = os.getenv("EMAIL_USER")
+            email_pass = os.getenv("EMAIL_PASS")
+
+            if email_user and email_pass:
+                yag = yagmail.SMTP(email_user, email_pass)
+                yag.send(
+                    to="troyburnsfamily@gmail.com",
+                    subject="Tour Mapper - Event Data",
+                    contents="Attached are the scraped event locations.",
+                    attachments=["static/events.kml"],
+                )
+
+        except Exception as email_error:
+            print(f"⚠️ Email error: {email_error}")
+
+        return json.dumps({"status": "success", "message": "Scraping completed.", "events": events})
+
+    except Exception as e:
+        print(f"❌ SERVER ERROR: {e}")
+        return json.dumps({"status": "error", "message": str(e)}), 500
+
+    finally:
+        driver.quit()  # Properly close the WebDriver
+
+
+@app.route("/download_kml")
+def download_kml():
+    """Download the generated KML file."""
+    try:
+        return send_file("static/events.kml", as_attachment=True)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": "KML file not found."}), 404
+
+
+@app.route("/download_geojson")
+def download_geojson():
+    """Download the generated GeoJSON file."""
+    try:
+        return send_file("static/events.geojson", as_attachment=True)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": "GeoJSON file not found."}), 404
+
+
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
 
