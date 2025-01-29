@@ -96,7 +96,7 @@ def start_scraping():
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         driver_path = os.getenv('CHROMEDRIVER_PATH', '/app/.chromedriver/bin/chromedriver')
-        browser = webdriver.Chrome(driver_path, options=chrome_options)
+        browser = webdriver.Chrome(options=chrome_options)
 
         events = []
         for url in urls:
