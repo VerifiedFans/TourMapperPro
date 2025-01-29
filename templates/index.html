@@ -3,24 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upload Venue URLs</title>
+    <title>Venue Data Uploader</title>
     <script>
-        async function uploadURLs() {
-            let urls = document.getElementById("urlInput").value;
-            let formData = new FormData();
-            formData.append("urls", urls);
+        function uploadUrls() {
+            let urls = document.getElementById("urlInput").value.split("\n");
+            fetch('/upload_urls', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ urls: urls })
+            })
+            .then(response => response.json())
+            .then(data => alert(data.message))
+            .catch(error => console.error("Error:", error));
+        }
 
-            let response = await fetch("/upload", { method: "POST", body: formData });
-            let result = await response.json();
-
-            document.getElementById("response").innerText = result.message;
+        function startScraping() {
+            fetch('/start', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => alert(data.message))
+            .catch(error => console.error("Error:", error));
         }
     </script>
 </head>
 <body>
-    <h1>Upload Venue URLs</h1>
+    <h1>Venue Data Uploader</h1>
     <textarea id="urlInput" rows="10" cols="50" placeholder="Paste venue URLs here..."></textarea><br>
-    <button onclick="uploadURLs()">Submit</button>
-    <p id="response"></p>
+    <button onclick="uploadUrls()">Upload URLs</button>
+    <button onclick="startScraping()">Start Scraping</button>
 </body>
 </html>
