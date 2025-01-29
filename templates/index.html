@@ -3,32 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>URL Uploader</title>
+    <title>Upload Venue URLs</title>
+    <script>
+        async function uploadURLs() {
+            let urls = document.getElementById("urlInput").value;
+            let formData = new FormData();
+            formData.append("urls", urls);
+
+            let response = await fetch("/upload", { method: "POST", body: formData });
+            let result = await response.json();
+
+            document.getElementById("response").innerText = result.message;
+        }
+    </script>
 </head>
 <body>
     <h1>Upload Venue URLs</h1>
-    <form id="urlForm" method="POST" action="/upload-urls">
-        <textarea name="urls" id="urls" rows="10" cols="50" placeholder="Paste multiple URLs, one per line"></textarea>
-        <br>
-        <button type="submit">Upload URLs</button>
-    </form>
-    <p id="status"></p>
-    <script>
-        document.getElementById("urlForm").onsubmit = async (e) => {
-            e.preventDefault();
-            const urls = document.getElementById("urls").value.trim();
-            if (!urls) {
-                document.getElementById("status").textContent = "Please paste URLs!";
-                return;
-            }
-            const response = await fetch("/upload-urls", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ urls: urls.split("\n") }),
-            });
-            const data = await response.json();
-            document.getElementById("status").textContent = data.message;
-        };
-    </script>
+    <textarea id="urlInput" rows="10" cols="50" placeholder="Paste venue URLs here..."></textarea><br>
+    <button onclick="uploadURLs()">Submit</button>
+    <p id="response"></p>
 </body>
 </html>
