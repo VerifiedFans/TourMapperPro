@@ -13,7 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 app = Flask(__name__)
 
-# Load Google Maps API Key from Environment
+# Load Google Maps API Key
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
 
@@ -25,18 +25,14 @@ EMAIL_PASS = os.getenv("EMAIL_PASS")
 URL_STORAGE_FILE = "urls.json"
 
 
-# -----------------------------------------------
-# 📌 ROUTES
-# -----------------------------------------------
 @app.route("/")
 def index():
-    """Render the homepage."""
     return render_template("index.html")
 
 
 @app.route("/upload_urls", methods=["POST"])
 def upload_urls():
-    """Receive a list of URLs from the user and save them."""
+    """Save uploaded URLs."""
     try:
         data = request.get_json()
         urls = data.get("urls", [])
@@ -44,7 +40,6 @@ def upload_urls():
         if not urls:
             return jsonify({"status": "error", "message": "No URLs received"}), 400
 
-        # Save URLs to a file
         with open(URL_STORAGE_FILE, "w") as f:
             json.dump(urls, f)
 
@@ -55,7 +50,7 @@ def upload_urls():
 
 @app.route("/view_urls", methods=["GET"])
 def view_urls():
-    """Return the stored URLs."""
+    """View stored URLs."""
     if os.path.exists(URL_STORAGE_FILE):
         with open(URL_STORAGE_FILE, "r") as f:
             urls = json.load(f)
@@ -65,9 +60,8 @@ def view_urls():
 
 @app.route("/start_scraping", methods=["POST"])
 def start_scraping():
-    """Start scraping events from the stored URLs."""
+    """Start the scraping process."""
     try:
-        # Load URLs
         if not os.path.exists(URL_STORAGE_FILE):
             return jsonify({"status": "error", "message": "No URLs uploaded"}), 400
 
@@ -84,12 +78,12 @@ def start_scraping():
         chrome_options.add_argument("--disable-dev-shm-usage")
 
         driver_path = os.getenv("CHROMEDRIVER_PATH", "/app/.chromedriver/bin/chromedriver")
-        browser = webdriver.Chrome(driver_path, options=chrome_options)
+        browser = webdriver.Chrome(executable_path=driver_path, options=chrome_options)
 
         events = []
         for url in urls:
             browser.get(url)
-            time.sleep(3)  # Allow time for page to load
+            time.sleep(3)
 
             try:
                 event_data = {
@@ -99,13 +93,12 @@ def start_scraping():
                     "city_state_zip": browser.find_element(By.CSS_SELECTOR, "div a[href*='bandsintown.com/c/']").text,
                 }
 
-                # Extract City, State, Zip
                 city_state_zip_parts = event_data["city_state_zip"].split(" ")
                 event_data["city"] = city_state_zip_parts[0].strip().replace(",", "")
                 event_data["state"] = city_state_zip_parts[1].strip().replace(",", "")
                 event_data["zip"] = city_state_zip_parts[-1].strip()
 
-                # Convert Address to Lat/Long using Google Maps API
+                # Convert Address to Lat/Long
                 full_address = f"{event_data['address']}, {event_data['city']}, {event_data['state']} {event_data['zip']}"
                 geocode_result = gmaps.geocode(full_address)
 
@@ -115,7 +108,7 @@ def start_scraping():
 
                 events.append(event_data)
             except Exception as e:
-                print(f"Error extracting event data from {url}: {e}")
+                print(f"❌ ERROR extracting event data from {url}: {e}")
 
         browser.quit()
 
@@ -131,6 +124,7 @@ def start_scraping():
                 coords=[(event["longitude"], event["latitude"])],
             )
 
+        # Ensure 'static' directory exists
         if not os.path.exists("static"):
             os.makedirs("static")
 
@@ -147,7 +141,7 @@ def start_scraping():
                 attachments=[kml_file]
             )
         except Exception as e:
-            print(f"Email Error: {e}")
+            print(f"❌ EMAIL ERROR: {e}")
             return jsonify({
                 "status": "warning",
                 "message": "Scraping completed but email failed.",
@@ -157,6 +151,7 @@ def start_scraping():
         return jsonify({"status": "success", "message": "Scraping completed!", "events": events})
 
     except Exception as e:
+        print(f"❌ SERVER ERROR: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
