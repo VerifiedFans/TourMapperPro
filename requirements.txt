@@ -3,7 +3,6 @@ Werkzeug>=2.1.0
 requests
 simplekml
 yagmail
-zipfile36
 gunicorn
 selenium
 beautifulsoup4
