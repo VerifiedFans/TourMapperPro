@@ -1,3 +1,4 @@
+
 import os
 import json
 import time
@@ -72,11 +73,14 @@ def start_scraping():
         if not urls:
             return jsonify({"status": "error", "message": "No URLs found in file"}), 400
 
-        # Configure Chrome WebDriver
+        # Configure Chrome WebDriver with optimized options
         chrome_options = Options()
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--single-process")
+        chrome_options.add_argument("--window-size=1280x1024")
 
         driver_path = os.getenv("CHROMEDRIVER_PATH", "/app/.chromedriver/bin/chromedriver")
         service = Service(driver_path)
@@ -112,6 +116,7 @@ def start_scraping():
             except Exception as e:
                 print(f"❌ ERROR extracting event data from {url}: {e}")
 
+        # Close the browser to free memory
         browser.quit()
 
         if not events:
