@@ -1,3 +1,4 @@
+
 import os
 import time
 import json
@@ -29,6 +30,11 @@ if not EMAIL_USER or not EMAIL_PASS:
 
 # Store URLs permanently
 URL_FILE = "urls.txt"
+STATIC_DIR = "static"
+
+# Ensure static directory exists
+if not os.path.exists(STATIC_DIR):
+    os.makedirs(STATIC_DIR)
 
 @app.route('/')
 def index():
@@ -166,15 +172,21 @@ def start_scraping():
             except Exception as e:
                 logging.error(f"❌ Geocoding error: {e}")
 
-        # Save KML & GeoJSON
-        if not os.path.exists("static"):
-            os.makedirs("static")
+        # Save KML & GeoJSON in STATIC_DIR
+        kml_file = os.path.join(STATIC_DIR, "events.kml")
+        geojson_file = os.path.join(STATIC_DIR, "events.geojson")
 
-        kml.save("static/events.kml")
-        with open("static/events.geojson", "w") as f:
+        kml.save(kml_file)
+        with open(geojson_file, "w") as f:
             json.dump(geojson_data, f)
 
-        return jsonify({"status": "success", "message": "Scraping completed!", "events": events})
+        return jsonify({
+            "status": "success",
+            "message": "Scraping completed!",
+            "events": events,
+            "kml_url": "/download_kml",
+            "geojson_url": "/download_geojson"
+        })
 
     except Exception as e:
         logging.error(f"❌ Unhandled error: {e}")
@@ -183,24 +195,18 @@ def start_scraping():
 @app.route('/download_kml')
 def download_kml():
     """Download KML file."""
-    return send_from_directory("static", "events.kml", as_attachment=True)
+    file_path = os.path.join(STATIC_DIR, "events.kml")
+    if not os.path.exists(file_path):
+        return jsonify({"status": "error", "message": "KML file not found!"}), 404
+    return send_from_directory(STATIC_DIR, "events.kml", as_attachment=True)
 
 @app.route('/download_geojson')
 def download_geojson():
     """Download GeoJSON file."""
-    return send_from_directory("static", "events.geojson", as_attachment=True)
-
-@app.route('/clear_urls', methods=['POST'])
-def clear_urls():
-    """Clear the stored URLs."""
-    try:
-        if os.path.exists(URL_FILE):
-            os.remove(URL_FILE)
-        return jsonify({"status": "success", "message": "URLs cleared!"})
-    except Exception as e:
-        logging.error(f"Error clearing URLs: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    file_path = os.path.join(STATIC_DIR, "events.geojson")
+    if not os.path.exists(file_path):
+        return jsonify({"status": "error", "message": "GeoJSON file not found!"}), 404
+    return send_from_directory(STATIC_DIR, "events.geojson", as_attachment=True)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
-
