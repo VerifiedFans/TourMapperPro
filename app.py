@@ -1,3 +1,4 @@
+
 import os
 import json
 import googlemaps
@@ -7,7 +8,12 @@ from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
 
-# Load API Key for Google Maps Geocoding
+# Ensure the 'static' directory exists
+STATIC_DIR = "static"
+if not os.path.exists(STATIC_DIR):
+    os.makedirs(STATIC_DIR)
+
+# Load Google Maps API Key
 GMAPS_API_KEY = os.getenv('GOOGLE_MAPS_API_KEY')
 if not GMAPS_API_KEY:
     raise ValueError("Google Maps API Key is missing! Set it in Heroku environment variables.")
@@ -104,6 +110,10 @@ def start_scraping():
     if errors:
         return jsonify({"status": "error", "message": "Some errors occurred", "errors": errors}), 500
 
+    # Ensure 'static' directory exists
+    if not os.path.exists(STATIC_DIR):
+        os.makedirs(STATIC_DIR)
+
     # Generate KML & GeoJSON files
     kml = simplekml.Kml()
     geojson = {"type": "FeatureCollection", "features": []}
@@ -117,9 +127,13 @@ def start_scraping():
                 "properties": event
             })
 
-    kml.save("static/events.kml")
-    with open("static/events.geojson", "w") as geojson_file:
-        json.dump(geojson, geojson_file)
+    kml_file = os.path.join(STATIC_DIR, "events.kml")
+    geojson_file = os.path.join(STATIC_DIR, "events.geojson")
+
+    kml.save(kml_file)
+
+    with open(geojson_file, "w") as geojson_f:
+        json.dump(geojson, geojson_f)
 
     # Send email with attachments
     try:
@@ -128,7 +142,7 @@ def start_scraping():
             to='troyburnsfamily@gmail.com',
             subject='Event Data',
             contents='Attached are your KML & GeoJSON files.',
-            attachments=["static/events.kml", "static/events.geojson"]
+            attachments=[kml_file, geojson_file]
         )
     except Exception as e:
         return jsonify({"status": "warning", "message": "Scraping completed but email failed.", "error": str(e)})
