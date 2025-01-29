@@ -1,4 +1,3 @@
-
 import os
 import json
 import time
@@ -73,7 +72,7 @@ def start_scraping():
         if not urls:
             return jsonify({"status": "error", "message": "No URLs found in file"}), 400
 
-        # Configure Chrome WebDriver with optimized options
+        # Chrome WebDriver optimized for memory usage
         chrome_options = Options()
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
@@ -84,14 +83,15 @@ def start_scraping():
 
         driver_path = os.getenv("CHROMEDRIVER_PATH", "/app/.chromedriver/bin/chromedriver")
         service = Service(driver_path)
-        browser = webdriver.Chrome(service=service, options=chrome_options)
 
         events = []
-        for url in urls:
-            browser.get(url)
-            time.sleep(3)
 
+        for url in urls:
             try:
+                browser = webdriver.Chrome(service=service, options=chrome_options)
+                browser.get(url)
+                time.sleep(3)
+
                 event_data = {
                     "date": browser.find_element(By.CSS_SELECTOR, "h2.EfW1v6YNlQnbyB7fUHmR").text,
                     "venue": browser.find_element(By.CSS_SELECTOR, "a.q1Vlsw1cdclAUZ4gBvAn").text,
@@ -99,6 +99,7 @@ def start_scraping():
                     "city_state_zip": browser.find_element(By.CSS_SELECTOR, "div a[href*='bandsintown.com/c/']").text,
                 }
 
+                # Extract city, state, zip from `city_state_zip`
                 city_state_zip_parts = event_data["city_state_zip"].split(" ")
                 event_data["city"] = city_state_zip_parts[0].strip().replace(",", "")
                 event_data["state"] = city_state_zip_parts[1].strip().replace(",", "")
@@ -113,11 +114,12 @@ def start_scraping():
                     event_data["longitude"] = geocode_result[0]["geometry"]["location"]["lng"]
 
                 events.append(event_data)
+
+                # Close browser after each URL to free memory
+                browser.quit()
+
             except Exception as e:
                 print(f"❌ ERROR extracting event data from {url}: {e}")
-
-        # Close the browser to free memory
-        browser.quit()
 
         if not events:
             return jsonify({"status": "error", "message": "No valid event data found."}), 400
