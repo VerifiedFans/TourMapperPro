@@ -8,4 +8,4 @@ gunicorn
 selenium
 beautifulsoup4
 chromedriver-binary
-google maps
+googlemaps
