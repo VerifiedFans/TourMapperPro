@@ -57,10 +57,13 @@
             $.ajax({
                 url: "/upload_urls",
                 type: "POST",
-                contentType: "application/json",
+                contentType: "application/json",  // ✅ Correct JSON format
                 data: JSON.stringify({ urls: urls }),
                 success: (response) => showResponse(response.message),
-                error: () => showResponse("Error uploading URLs.", false)
+                error: (xhr) => {
+                    let msg = xhr.responseJSON ? xhr.responseJSON.message : "Error uploading URLs.";
+                    showResponse(msg, false);
+                }
             });
         }
 
@@ -71,20 +74,29 @@
                 } else {
                     $('#stored_urls').html("<ul>" + response.urls.map(url => `<li>${url}</li>`).join("") + "</ul>");
                 }
-            }).fail(() => showResponse("Error retrieving stored URLs.", false));
+            }).fail((xhr) => {
+                let msg = xhr.responseJSON ? xhr.responseJSON.message : "Error retrieving stored URLs.";
+                showResponse(msg, false);
+            });
         }
 
         function clearUrls() {
             $.post("/clear_urls", function(response) {
                 showResponse(response.message);
                 $('#stored_urls').html("");
-            }).fail(() => showResponse("Error clearing URLs.", false));
+            }).fail((xhr) => {
+                let msg = xhr.responseJSON ? xhr.responseJSON.message : "Error clearing URLs.";
+                showResponse(msg, false);
+            });
         }
 
         function startScraping() {
             $.post("/start_scraping", function(response) {
                 showResponse(response.message);
-            }).fail(() => showResponse("Error starting scraping.", false));
+            }).fail((xhr) => {
+                let msg = xhr.responseJSON ? xhr.responseJSON.message : "Error starting scraping.";
+                showResponse(msg, false);
+            });
         }
     </script>
 </body>
