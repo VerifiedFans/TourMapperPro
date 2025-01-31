@@ -1,24 +1,24 @@
-from flask import Flask, send_from_directory, request, jsonify
 import os
+from flask import Flask, render_template, request, jsonify, send_from_directory
 
 app = Flask(__name__)
 
-# Ensure static folder exists
-STATIC_FOLDER = os.path.join(app.root_path, "static")
-if not os.path.exists(STATIC_FOLDER):
-    os.makedirs(STATIC_FOLDER)
+# ✅ Ensure the static directory exists
+STATIC_DIR = os.path.join(app.root_path, "static")
+if not os.path.exists(STATIC_DIR):
+    os.makedirs(STATIC_DIR)
 
-# Serve static files (KML & GeoJSON)
+# ✅ Serve static KML & GeoJSON files
 @app.route("/static/<path:filename>")
 def serve_static(filename):
-    return send_from_directory(STATIC_FOLDER, filename)
+    return send_from_directory(STATIC_DIR, filename)
 
-# Homepage Route
+# ✅ Home route (loads a template)
 @app.route("/")
 def home():
-    return "🚀 Flask App is Running on Heroku!"
+    return render_template("index.html")  # Ensure you have templates/index.html
 
-# Upload URLs API (Dummy Example)
+# ✅ Upload URLs API
 @app.route("/upload_urls", methods=["POST"])
 def upload_urls():
     data = request.json
@@ -27,11 +27,12 @@ def upload_urls():
         return jsonify({"error": "No URLs provided"}), 400
     return jsonify({"message": "URLs received", "urls": urls})
 
-# Start scraping process API (Dummy Example)
+# ✅ Start scraping API
 @app.route("/start_scraping", methods=["POST"])
 def start_scraping():
     return jsonify({"message": "Scraping started"}), 200
 
-# Run the app
+# ✅ Run the Flask app
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))  # Required for Heroku deployment
+    app.run(host="0.0.0.0", port=port, debug=True)
