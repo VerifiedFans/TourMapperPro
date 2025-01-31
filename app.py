@@ -1,216 +1,153 @@
-from flask import Flask, request, jsonify, render_template, send_from_directory
-import logging
 import os
 import json
-import time
-import simplekml
+from flask import Flask, request, jsonify, render_template, send_from_directory
 import googlemaps
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from bs4 import BeautifulSoup
 import geopy.distance
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
 # Initialize Flask app
-app = Flask(__name__, template_folder="templates")
+app = Flask(__name__)
 
-# Enable logging for debugging
-logging.basicConfig(level=logging.DEBUG)
+# Ensure 'static' directory exists for file storage
+STATIC_FOLDER = "static"
+if not os.path.exists(STATIC_FOLDER):
+    os.makedirs(STATIC_FOLDER)
 
-# Store URLs in memory
-stored_urls = []
+# Get Google Maps API Key from environment variable
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+if not GOOGLE_MAPS_API_KEY:
+    raise ValueError("⚠️ Missing Google Maps API Key! Set GOOGLE_MAPS_API_KEY in Heroku.")
 
-# Set up Google Maps API
-GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"  # Replace with your API Key
+# Initialize Google Maps Client
 gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
 
+# Store uploaded URLs globally
+stored_urls = []
+
+# --- Route: Home ---
 @app.route('/')
 def home():
-    """Serve the main HTML page."""
-    return render_template("index.html")
+    return render_template('index.html')
 
+# --- Route: Upload URLs ---
 @app.route('/upload_urls', methods=['POST'])
 def upload_urls():
-    """Receive and store URLs."""
-    try:
-        data = request.get_json()
-        if not data or 'urls' not in data:
-            return jsonify({"message": "Invalid request. No URLs received."}), 400
+    data = request.get_json()
+    if 'urls' not in data:
+        return jsonify({"error": "No URLs provided"}), 400
+    
+    urls = data['urls']
+    stored_urls.extend(urls)
 
-        urls = data['urls']
-        if not isinstance(urls, list) or not all(isinstance(url, str) for url in urls):
-            return jsonify({"message": "Invalid data format. Expecting a list of URLs."}), 400
+    return jsonify({"message": "URLs uploaded successfully", "stored_urls": stored_urls})
 
-        stored_urls.extend(urls)
-        logging.info(f"Stored URLs: {stored_urls}")
-        return jsonify({"message": "URLs uploaded successfully!"}), 200
-
-    except Exception as e:
-        logging.error(f"Upload URLs error: {str(e)}")
-        return jsonify({"message": f"Error: {str(e)}"}), 500
-
-@app.route('/view_urls', methods=['GET'])
-def view_urls():
-    """Retrieve stored URLs."""
-    return jsonify({"urls": stored_urls})
-
-@app.route('/clear_urls', methods=['POST'])
-def clear_urls():
-    """Clear stored URLs."""
-    global stored_urls
-    stored_urls = []
-    return jsonify({"message": "Stored URLs cleared successfully."})
-
-def extract_coordinates(soup):
-    """Extract venue latitude & longitude from the page."""
-    try:
-        lat_tag = soup.find("meta", {"property": "place:location:latitude"})
-        lon_tag = soup.find("meta", {"property": "place:location:longitude"})
-
-        if lat_tag and lon_tag:
-            return float(lat_tag["content"]), float(lon_tag["content"])
-
-    except Exception as e:
-        logging.error(f"Error extracting coordinates: {str(e)}")
-
-    return None, None  # Default if not found
-
-def generate_polygon(lat, lon, size=0.002):
-    """Generate a square polygon around the venue (size ≈ 200m)."""
-    return [
-        (lat + size, lon - size),
-        (lat + size, lon + size),
-        (lat - size, lon + size),
-        (lat - size, lon - size),
-        (lat + size, lon - size)
-    ]
-
-def find_parking_areas(venue_lat, venue_lon):
-    """Find parking areas near the venue, avoiding main roads."""
-    try:
-        places = gmaps.places_nearby(
-            location=(venue_lat, venue_lon),
-            radius=500,
-            type="parking"
-        )
-
-        parking_polygons = []
-        for place in places.get("results", []):
-            lat = place["geometry"]["location"]["lat"]
-            lon = place["geometry"]["location"]["lng"]
-
-            parking_polygon = generate_polygon(lat, lon, size=0.0015)
-
-            if not crosses_main_roads(parking_polygon):
-                parking_polygons.append(parking_polygon)
-
-        return parking_polygons
-
-    except Exception as e:
-        logging.error(f"Error finding parking areas: {str(e)}")
-        return []
-
-def crosses_main_roads(polygon):
-    """Check if a polygon crosses a main road."""
-    try:
-        for lat, lon in polygon:
-            roads = gmaps.roads.snap_to_roads([(lat, lon)])
-            for road in roads.get("snappedPoints", []):
-                if "highway" in road["placeId"]:
-                    return True
-    except Exception as e:
-        logging.error(f"Error checking road crossings: {str(e)}")
-    return False
-
+# --- Route: Start Scraping ---
 @app.route('/start_scraping', methods=['POST'])
 def start_scraping():
-    """Scrape venue & parking polygon coordinates and generate KML & GeoJSON."""
-    try:
-        if not stored_urls:
-            return jsonify({"message": "No URLs to scrape."}), 400
+    if not stored_urls:
+        return jsonify({"error": "No URLs available for scraping"}), 400
+    
+    venue_data = []
+    
+    # Configure Selenium WebDriver
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")  # Run in headless mode
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
 
-        results = []
+    driver = webdriver.Chrome(options=chrome_options)
 
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
+    for url in stored_urls:
+        driver.get(url)
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-        service = Service()
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        # Extract latitude and longitude from the webpage
+        lat, lon = extract_lat_lon(soup)
+        venue_data.append({"url": url, "latitude": lat, "longitude": lon})
 
-        for url in stored_urls:
-            driver.get(url)
-            time.sleep(3)
+    driver.quit()
 
-            soup = BeautifulSoup(driver.page_source, "html.parser")
-            title = soup.find("title").text if soup.find("title") else "No title found"
+    # Generate KML and GeoJSON files
+    kml_filename = save_kml(venue_data)
+    geojson_filename = save_geojson(venue_data)
 
-            venue_lat, venue_lon = extract_coordinates(soup)
+    return jsonify({
+        "message": "Scraping completed!",
+        "kml_file": f"/download/{kml_filename}",
+        "geojson_file": f"/download/{geojson_filename}"
+    })
 
-            if venue_lat and venue_lon:
-                venue_polygon = generate_polygon(venue_lat, venue_lon)
-                parking_polygons = find_parking_areas(venue_lat, venue_lon)
+# --- Extract Latitude & Longitude from Webpage ---
+def extract_lat_lon(soup):
+    lat, lon = None, None
+    # Example: Extract lat/lon from meta tags
+    lat_meta = soup.find("meta", {"property": "place:location:latitude"})
+    lon_meta = soup.find("meta", {"property": "place:location:longitude"})
 
-                event_info = {
-                    "url": url,
-                    "title": title,
-                    "venue_polygon": venue_polygon,
-                    "parking_polygons": parking_polygons
-                }
-                results.append(event_info)
+    if lat_meta and lon_meta:
+        lat = float(lat_meta["content"])
+        lon = float(lon_meta["content"])
 
-        driver.quit()
+    return lat, lon
 
-        generate_kml(results)
-        generate_geojson(results)
+# --- Generate KML File ---
+def save_kml(venue_data):
+    kml_content = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    kml_content += '<kml xmlns="http://www.opengis.net/kml/2.2">\n'
+    kml_content += "<Document>\n"
 
-        return jsonify({"message": "Scraping completed!", "data": results})
+    for venue in venue_data:
+        kml_content += f"""
+        <Placemark>
+            <name>{venue['url']}</name>
+            <Point>
+                <coordinates>{venue['longitude']},{venue['latitude']},0</coordinates>
+            </Point>
+        </Placemark>
+        """
 
-    except Exception as e:
-        logging.error(f"Scraping error: {str(e)}")
-        return jsonify({"message": f"Error: {str(e)}"}), 500
+    kml_content += "</Document>\n</kml>"
 
-def generate_kml(events):
-    """Generate a KML file with venue & parking polygons."""
-    os.makedirs("static", exist_ok=True)
-    kml = simplekml.Kml()
+    filename = "venues.kml"
+    filepath = os.path.join(STATIC_FOLDER, filename)
+    with open(filepath, "w") as file:
+        file.write(kml_content)
 
-    for event in events:
-        venue_polygon = kml.newpolygon(name=event["title"])
-        venue_polygon.outerboundaryis = event["venue_polygon"]
+    return filename
 
-        for parking in event["parking_polygons"]:
-            parking_polygon = kml.newpolygon(name="Parking Area")
-            parking_polygon.outerboundaryis = parking
+# --- Generate GeoJSON File ---
+def save_geojson(venue_data):
+    geojson = {
+        "type": "FeatureCollection",
+        "features": []
+    }
 
-    kml.save("static/events.kml")
-
-def generate_geojson(events):
-    """Generate a GeoJSON file with venue & parking polygons."""
-    os.makedirs("static", exist_ok=True)
-    geojson_data = {"type": "FeatureCollection", "features": []}
-
-    for event in events:
-        geojson_data["features"].append({
+    for venue in venue_data:
+        geojson["features"].append({
             "type": "Feature",
-            "properties": {"title": event["title"]},
-            "geometry": {"type": "Polygon", "coordinates": [event["venue_polygon"]]}
+            "geometry": {
+                "type": "Point",
+                "coordinates": [venue["longitude"], venue["latitude"]]
+            },
+            "properties": {
+                "url": venue["url"]
+            }
         })
-        for parking in event["parking_polygons"]:
-            geojson_data["features"].append({
-                "type": "Feature",
-                "properties": {"title": "Parking Area"},
-                "geometry": {"type": "Polygon", "coordinates": [parking]}
-            })
 
-    with open("static/events.geojson", "w") as file:
-        json.dump(geojson_data, file, indent=4)
+    filename = "venues.geojson"
+    filepath = os.path.join(STATIC_FOLDER, filename)
+    with open(filepath, "w") as file:
+        json.dump(geojson, file)
 
-@app.route('/static/<path:filename>')
-def static_files(filename):
-    """Serve static files from the 'static' directory."""
-    return send_from_directory('static', filename)
+    return filename
 
+# --- Route: Download Files ---
+@app.route('/download/<filename>')
+def download_file(filename):
+    return send_from_directory(STATIC_FOLDER, filename, as_attachment=True)
+
+# --- Start Flask App ---
 if __name__ == '__main__':
     app.run(debug=True)
