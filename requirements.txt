@@ -10,3 +10,4 @@ chromedriver-binary==114.0.5735.90.0
 googlemaps==4.10.0
 keyring==23.13.1
 geopy
+pip freeze
