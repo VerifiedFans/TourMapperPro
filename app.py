@@ -1,5 +1,8 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, send_from_directory
 import logging
+import os
+import json
+import simplekml
 import time
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -11,13 +14,13 @@ app = Flask(__name__, template_folder="templates")
 # Enable logging for debugging
 logging.basicConfig(level=logging.DEBUG)
 
-# Store URLs in memory (temporary)
+# Store URLs in memory (temporary storage)
 stored_urls = []
 
 @app.route('/')
 def home():
     """Serve the main HTML page."""
-    return render_template("index.html")  # ✅ Ensure index.html is in the 'templates' folder
+    return render_template("index.html")
 
 @app.route('/upload_urls', methods=['POST'])
 def upload_urls():
@@ -51,22 +54,59 @@ def clear_urls():
     stored_urls = []
     return jsonify({"message": "Stored URLs cleared successfully."})
 
+def generate_kml(events):
+    """Generate a KML file from scraped events."""
+    kml = simplekml.Kml()
+    
+    for event in events:
+        if "latitude" in event and "longitude" in event:
+            kml.newpoint(name=event["title"], coords=[(event["longitude"], event["latitude"])])
+
+    os.makedirs("static", exist_ok=True)  # ✅ Ensure 'static/' exists before saving
+    file_path = os.path.join("static", "events.kml")
+    kml.save(file_path)
+    logging.debug(f"KML file saved at {file_path}")
+
+def generate_geojson(events):
+    """Generate a GeoJSON file from scraped events."""
+    geojson_data = {
+        "type": "FeatureCollection",
+        "features": []
+    }
+    
+    for event in events:
+        if "latitude" in event and "longitude" in event:
+            geojson_data["features"].append({
+                "type": "Feature",
+                "properties": {"title": event["title"]},
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [event["longitude"], event["latitude"]]
+                }
+            })
+
+    os.makedirs("static", exist_ok=True)  # ✅ Ensure 'static/' exists before saving
+    file_path = os.path.join("static", "events.geojson")
+    with open(file_path, "w") as file:
+        json.dump(geojson_data, file, indent=4)
+    logging.debug(f"GeoJSON file saved at {file_path}")
+
 @app.route('/start_scraping', methods=['POST'])
 def start_scraping():
-    """Scrape the stored URLs using Selenium & BeautifulSoup."""
+    """Scrape the stored URLs and generate KML & GeoJSON."""
     try:
         if not stored_urls:
             return jsonify({"message": "No URLs to scrape."}), 400
 
         results = []
 
-        # Set up Selenium (Chromedriver for Heroku)
+        # Set up Selenium
         chrome_options = Options()
-        chrome_options.add_argument("--headless")  # Run in headless mode (no UI)
+        chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
 
-        service = Service()  # Let Selenium find chromedriver automatically
+        service = Service()
         driver = webdriver.Chrome(service=service, options=chrome_options)
 
         for url in stored_urls:
@@ -74,22 +114,35 @@ def start_scraping():
             time.sleep(3)  # Allow page to load
 
             soup = BeautifulSoup(driver.page_source, "html.parser")
-
-            # Extract relevant data (Modify based on site structure)
             title = soup.find("title").text if soup.find("title") else "No title found"
+
+            # Example - Modify based on the website structure
+            latitude, longitude = 37.7749, -122.4194  # Fake data, replace with real values
+
             event_info = {
                 "url": url,
-                "title": title
+                "title": title,
+                "latitude": latitude,
+                "longitude": longitude
             }
             results.append(event_info)
 
-        driver.quit()  # Close the browser
+        driver.quit()
+
+        # ✅ Generate KML & GeoJSON files
+        generate_kml(results)
+        generate_geojson(results)
 
         return jsonify({"message": "Scraping completed!", "data": results})
 
     except Exception as e:
         logging.error(f"Scraping error: {str(e)}")
         return jsonify({"message": f"Error: {str(e)}"}), 500
+
+@app.route('/static/<path:filename>')
+def static_files(filename):
+    """Serve static files from the 'static' directory."""
+    return send_from_directory('static', filename)
 
 if __name__ == '__main__':
     app.run(debug=True)
