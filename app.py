@@ -1,18 +1,18 @@
 import os
 import json
-from flask import Flask, render_template, request, jsonify, send_from_directory, redirect
+from flask import Flask, render_template, request, jsonify, send_from_directory
 
 app = Flask(__name__)
 
-# ✅ Ensure static directory exists for KML & GeoJSON storage
+# ✅ Ensure 'static' directory exists to store files
 STATIC_DIR = os.path.join(app.root_path, "static")
 if not os.path.exists(STATIC_DIR):
     os.makedirs(STATIC_DIR)
 
-# ✅ Temporary storage for URLs
+# ✅ Temporary storage for uploaded URLs
 uploaded_urls = []
 
-# ✅ Serve Static Files (KML & GeoJSON)
+# ✅ Serve static files (KML & GeoJSON)
 @app.route("/static/<path:filename>")
 def serve_static(filename):
     return send_from_directory(STATIC_DIR, filename)
@@ -20,7 +20,7 @@ def serve_static(filename):
 # ✅ Home Route
 @app.route("/")
 def home():
-    return render_template("index.html")  # Ensure 'templates/index.html' exists
+    return render_template("index.html")
 
 # ✅ Upload URLs API
 @app.route("/upload_urls", methods=["POST"])
@@ -45,15 +45,14 @@ def clear_urls():
     uploaded_urls = []
     return jsonify({"message": "All URLs cleared"})
 
-# ✅ Start Scraping (Dummy Response)
+# ✅ Start Scraping (Placeholder API)
 @app.route("/start_scraping", methods=["POST"])
 def start_scraping():
     return jsonify({"message": "Scraping started"}), 200
 
-# ✅ Ensure GeoJSON file contains valid polygon lat/lon data
+# ✅ Generate Correct GeoJSON Polygon File
 @app.route("/generate_geojson", methods=["POST"])
 def generate_geojson():
-    # Sample polygon coordinates (Replace this with actual scraping logic)
     geojson_data = {
         "type": "FeatureCollection",
         "features": [
@@ -67,11 +66,11 @@ def generate_geojson():
                             [-122.084, 37.423],
                             [-122.083, 37.423],
                             [-122.083, 37.422],
-                            [-122.084, 37.422]
+                            [-122.084, 37.422]  # Closed loop
                         ]
                     ]
                 },
-                "properties": {"name": "Sample Area"}
+                "properties": {"name": "Example Polygon"}
             }
         ]
     }
@@ -82,17 +81,29 @@ def generate_geojson():
 
     return jsonify({"message": "GeoJSON file created", "file": "events.geojson"})
 
-# ✅ Ensure KML file downloads properly
+# ✅ Generate Proper KML File
 @app.route("/generate_kml", methods=["POST"])
 def generate_kml():
     kml_content = """<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
-    <Placemark>
-        <name>Sample Location</name>
-        <Point>
-            <coordinates>-122.084,37.422,0</coordinates>
-        </Point>
-    </Placemark>
+    <Document>
+        <Placemark>
+            <name>Sample Polygon</name>
+            <Polygon>
+                <outerBoundaryIs>
+                    <LinearRing>
+                        <coordinates>
+                            -122.084,37.422,0
+                            -122.084,37.423,0
+                            -122.083,37.423,0
+                            -122.083,37.422,0
+                            -122.084,37.422,0
+                        </coordinates>
+                    </LinearRing>
+                </outerBoundaryIs>
+            </Polygon>
+        </Placemark>
+    </Document>
 </kml>"""
 
     kml_path = os.path.join(STATIC_DIR, "events.kml")
@@ -101,7 +112,7 @@ def generate_kml():
 
     return jsonify({"message": "KML file created", "file": "events.kml"})
 
-# ✅ Run Flask App on Correct Port for Heroku
+# ✅ Ensure the app runs properly on Heroku
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
