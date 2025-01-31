@@ -1,34 +1,19 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 import logging
 
-app = Flask(__name__)
+# Initialize Flask app
+app = Flask(__name__, template_folder="templates")
 
-# Enable logging
+# Enable logging for debugging
 logging.basicConfig(level=logging.DEBUG)
 
-URLS_FILE = "urls.txt"
+# Store URLs in memory (temporary storage)
+stored_urls = []
 
-def save_urls(urls):
-    """Save URLs to a file for persistence."""
-    try:
-        with open(URLS_FILE, "a") as file:
-            for url in urls:
-                file.write(url + "\n")
-        return True
-    except Exception as e:
-        logging.error(f"Error saving URLs: {str(e)}")
-        return False
-
-def load_urls():
-    """Load URLs from the file."""
-    try:
-        with open(URLS_FILE, "r") as file:
-            return [line.strip() for line in file.readlines()]
-    except FileNotFoundError:
-        return []
-    except Exception as e:
-        logging.error(f"Error reading URLs: {str(e)}")
-        return []
+@app.route('/')
+def home():
+    """Serve the main HTML page."""
+    return render_template("index.html")  # ✅ Ensure index.html is in the 'templates' folder
 
 @app.route('/upload_urls', methods=['POST'])
 def upload_urls():
@@ -42,15 +27,16 @@ def upload_urls():
 
         if not data or 'urls' not in data:
             return jsonify({"message": "Invalid request. No URLs received."}), 400
-        
+
         urls = data['urls']
         if not isinstance(urls, list) or not all(isinstance(url, str) for url in urls):
             return jsonify({"message": "Invalid data format. Expecting a list of URLs."}), 400
-        
-        if save_urls(urls):
-            return jsonify({"message": "URLs uploaded successfully!"}), 200
-        else:
-            return jsonify({"message": "Error saving URLs."}), 500
+
+        # Store URLs in memory
+        stored_urls.extend(urls)
+
+        logging.info(f"Stored URLs: {stored_urls}")
+        return jsonify({"message": "URLs uploaded successfully!"}), 200
 
     except Exception as e:
         logging.error(f"Upload URLs error: {str(e)}")
@@ -59,23 +45,14 @@ def upload_urls():
 @app.route('/view_urls', methods=['GET'])
 def view_urls():
     """Endpoint to retrieve stored URLs."""
-    urls = load_urls()
-    return jsonify({"urls": urls})
+    return jsonify({"urls": stored_urls})
 
 @app.route('/clear_urls', methods=['POST'])
 def clear_urls():
     """Endpoint to clear stored URLs."""
-    try:
-        with open(URLS_FILE, "w") as file:
-            file.write("")  # Clear the file
-        return jsonify({"message": "Stored URLs cleared successfully."})
-    except Exception as e:
-        logging.error(f"Error clearing URLs: {str(e)}")
-        return jsonify({"message": f"Error: {str(e)}"}), 500
-
-@app.route('/')
-def home():
-    return "Tourmapper Pro API is running!"
+    global stored_urls
+    stored_urls = []
+    return jsonify({"message": "Stored URLs cleared successfully."})
 
 if __name__ == '__main__':
     app.run(debug=True)
