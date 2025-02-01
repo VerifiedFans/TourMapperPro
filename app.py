@@ -1,124 +1,157 @@
-import json
 import os
-from flask import Flask, request, send_from_directory, render_template, jsonify
+import json
+import googlemaps
+import requests
+from flask import Flask, request, jsonify, render_template, send_from_directory
 
 app = Flask(__name__)
 
-# Ensure the 'static' directory exists
-STATIC_DIR = "static"
-if not os.path.exists(STATIC_DIR):
-    os.makedirs(STATIC_DIR)
+# Load API key from environment variable (Make sure to set this in Heroku)
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
-# Temporary storage for URLs
-stored_urls = []
+# Initialize Google Maps Client
+gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
+
+# Store uploaded venues (Temporary storage - use a DB for production)
+venues = []
 
 
-# ==============================
-# 🔹 Serve Main Page
-# ==============================
 @app.route("/")
 def home():
     return render_template("index.html")
 
 
-# ==============================
-# 🔹 Upload URLs API
-# ==============================
-@app.route("/upload_urls", methods=["POST"])
-def upload_urls():
-    global stored_urls
+# 📌 1. Get Venue Details Using Google Places API
+@app.route("/get_venue", methods=["POST"])
+def get_venue():
     data = request.json
-    urls = data.get("urls", [])
+    venue_name = data.get("venue_name")
     
-    if not urls:
-        return jsonify({"error": "No URLs provided"}), 400
+    if not venue_name:
+        return jsonify({"error": "No venue name provided"}), 400
 
-    stored_urls.extend(urls)
-    return jsonify({"message": "URLs received", "urls": stored_urls})
+    try:
+        # Search for the venue in Google Places API
+        places_result = gmaps.places(query=venue_name)
+        if not places_result["results"]:
+            return jsonify({"error": "Venue not found"}), 404
+
+        place = places_result["results"][0]
+        place_id = place["place_id"]
+        place_details = gmaps.place(place_id=place_id, fields=["geometry", "name"])
+        
+        location = place_details["result"]["geometry"]["location"]
+        lat, lon = location["lat"], location["lng"]
+        
+        venue_info = {
+            "name": place["name"],
+            "lat": lat,
+            "lon": lon
+        }
+        
+        # Store in venues list
+        venues.append(venue_info)
+        
+        return jsonify(venue_info)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
-# ==============================
-# 🔹 View Stored URLs (Separate Page)
-# ==============================
-@app.route("/view_urls", methods=["GET"])
-def view_urls():
-    return render_template("view_urls.html", urls=stored_urls)
-
-
-# ==============================
-# 🔹 Clear Stored URLs
-# ==============================
-@app.route("/clear_urls", methods=["POST"])
-def clear_urls():
-    global stored_urls
-    stored_urls = []
-    return jsonify({"message": "URLs cleared"})
-
-
-# ==============================
-# 🔹 Generate & Serve GeoJSON File
-# ==============================
+# 📌 2. Generate GeoJSON Polygon from Venue
+@app.route("/generate_geojson", methods=["GET"])
 def generate_geojson():
-    geojson_data = {
+    if not venues:
+        return jsonify({"error": "No venues stored"}), 404
+    
+    geojson = {
         "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [
-                        [[-73.98, 40.75], [-73.99, 40.76], [-74.00, 40.77], [-73.98, 40.75]]
-                    ]
-                },
-                "properties": {"name": "Example Polygon"}
-            }
-        ]
+        "features": []
     }
-    with open(f"{STATIC_DIR}/events.geojson", "w") as f:
-        json.dump(geojson_data, f)
+
+    for venue in venues:
+        lat, lon = venue["lat"], venue["lon"]
+        geojson["features"].append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [lon + 0.001, lat + 0.001],  # Top-right
+                    [lon - 0.001, lat + 0.001],  # Top-left
+                    [lon - 0.001, lat - 0.001],  # Bottom-left
+                    [lon + 0.001, lat - 0.001],  # Bottom-right
+                    [lon + 0.001, lat + 0.001]   # Closing point
+                ]]
+            },
+            "properties": {
+                "name": venue["name"]
+            }
+        })
+
+    # Save GeoJSON file
+    static_dir = os.path.join(app.root_path, "static")
+    geojson_path = os.path.join(static_dir, "events.geojson")
+
+    with open(geojson_path, "w") as f:
+        json.dump(geojson, f)
+
+    return jsonify({"message": "GeoJSON generated", "file": "/static/events.geojson"})
 
 
-# ==============================
-# 🔹 Generate & Serve KML File
-# ==============================
+# 📌 3. Generate KML Polygon from Venue
+@app.route("/generate_kml", methods=["GET"])
 def generate_kml():
-    kml_data = """<?xml version="1.0" encoding="UTF-8"?>
+    if not venues:
+        return jsonify({"error": "No venues stored"}), 404
+    
+    kml_content = """<?xml version="1.0" encoding="UTF-8"?>
     <kml xmlns="http://www.opengis.net/kml/2.2">
-      <Placemark>
-        <name>Sample Location</name>
-        <Polygon>
-          <outerBoundaryIs>
-            <LinearRing>
-              <coordinates>-73.98,40.75 -73.99,40.76 -74.00,40.77 -73.98,40.75</coordinates>
-            </LinearRing>
-          </outerBoundaryIs>
-        </Polygon>
-      </Placemark>
-    </kml>"""
-    with open(f"{STATIC_DIR}/events.kml", "w") as f:
-        f.write(kml_data)
+    <Document>"""
+
+    for venue in venues:
+        lat, lon = venue["lat"], venue["lon"]
+        kml_content += f"""
+        <Placemark>
+            <name>{venue['name']}</name>
+            <Polygon>
+                <outerBoundaryIs>
+                    <LinearRing>
+                        <coordinates>
+                            {lon + 0.001},{lat + 0.001},0
+                            {lon - 0.001},{lat + 0.001},0
+                            {lon - 0.001},{lat - 0.001},0
+                            {lon + 0.001},{lat - 0.001},0
+                            {lon + 0.001},{lat + 0.001},0
+                        </coordinates>
+                    </LinearRing>
+                </outerBoundaryIs>
+            </Polygon>
+        </Placemark>"""
+
+    kml_content += "</Document></kml>"
+
+    # Save KML file
+    static_dir = os.path.join(app.root_path, "static")
+    kml_path = os.path.join(static_dir, "events.kml")
+
+    with open(kml_path, "w") as f:
+        f.write(kml_content)
+
+    return jsonify({"message": "KML generated", "file": "/static/events.kml"})
 
 
-# ==============================
-# 🔹 Start Scraping (Generate GeoJSON & KML)
-# ==============================
-@app.route("/start_scraping", methods=["POST"])
-def start_scraping():
-    generate_geojson()
-    generate_kml()
-    return jsonify({"message": "Scraping completed & files updated."}), 200
-
-
-# ==============================
-# 🔹 Serve Static Files (GeoJSON & KML)
-# ==============================
+# 📌 4. Serve Static Files (GeoJSON & KML)
 @app.route("/static/<path:filename>")
 def serve_static(filename):
-    return send_from_directory(STATIC_DIR, filename)
+    static_dir = os.path.join(app.root_path, "static")
+    return send_from_directory(static_dir, filename)
 
 
-# ==============================
-# 🔹 Run Flask App
-# ==============================
+# 📌 5. View Stored Venues
+@app.route("/view_urls")
+def view_urls():
+    return render_template("view_urls.html", venues=venues)
+
+
 if __name__ == "__main__":
     app.run(debug=True)
