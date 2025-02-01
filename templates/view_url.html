@@ -1,14 +1,18 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Uploaded URLs</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stored URLs</title>
 </head>
 <body>
-    <h2>Uploaded URLs</h2>
+    <h1>Uploaded URLs</h1>
     <ul>
         {% for url in urls %}
-            <li><a href="{{ url }}" target="_blank">{{ url }}</a></li>
+            <li>{{ url }}</li>
         {% endfor %}
     </ul>
+    <a href="/">Back to Home</a>
 </body>
 </html>
+
