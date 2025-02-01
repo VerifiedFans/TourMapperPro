@@ -1,151 +1,138 @@
 import os
 import json
-import googlemaps
+import requests
 from flask import Flask, request, jsonify, render_template, send_from_directory
 
-# Initialize Flask app
 app = Flask(__name__)
 
-# Ensure `static/` exists
-if not os.path.exists("static"):
-    os.makedirs("static")
-
-# Load Google API Key
+# Load API Key from environment variable
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
-gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
 
-# Store URLs and scraped locations
-stored_urls = []
-scraped_locations = []
+# Store uploaded URLs
+uploaded_urls = []
 
-# 1️⃣ **Home Page**
+
+### ✅ ROUTE: Home Page ###
 @app.route("/")
 def home():
     return render_template("index.html")
 
-# 2️⃣ **Upload URLs**
+
+### ✅ ROUTE: Upload URLs ###
 @app.route("/upload_urls", methods=["POST"])
 def upload_urls():
-    global stored_urls
+    global uploaded_urls
     data = request.json
     urls = data.get("urls", [])
+
     if not urls:
         return jsonify({"error": "No URLs provided"}), 400
-    stored_urls.extend(urls)
-    return jsonify({"message": "URLs uploaded successfully", "urls": stored_urls}), 200
 
-# 3️⃣ **View Stored URLs**
-@app.route("/view_urls")
+    uploaded_urls.extend(urls)
+    return jsonify({"message": "URLs uploaded successfully!", "urls": uploaded_urls})
+
+
+### ✅ ROUTE: View Uploaded URLs ###
+@app.route("/view_urls", methods=["GET"])
 def view_urls():
-    return render_template("view_urls.html", urls=stored_urls)
+    return render_template("view_urls.html", urls=uploaded_urls)
 
-# 4️⃣ **Clear Stored URLs**
+
+### ✅ ROUTE: Clear Uploaded URLs ###
 @app.route("/clear_urls", methods=["POST"])
 def clear_urls():
-    global stored_urls, scraped_locations
-    stored_urls = []
-    scraped_locations = []
-    return jsonify({"message": "URLs and scraped data cleared"}), 200
+    global uploaded_urls
+    uploaded_urls = []
+    return jsonify({"message": "URLs cleared successfully!"})
 
-# 5️⃣ **Start Scraping (Fixed Function)**
-@app.route("/start_scraping", methods=["POST"])
-def start_scraping():
-    global scraped_locations
 
-    # 🔴 Fix: Check if URLs exist before scraping
-    if not stored_urls:
-        return jsonify({"error": "No URLs to scrape"}), 400
+### ✅ FUNCTION: Scrape Google Places API ###
+def scrape_data():
+    """
+    Uses Google Places API to find locations, generate GeoJSON & KML.
+    """
+    if not GOOGLE_MAPS_API_KEY:
+        print("❌ ERROR: Missing Google Maps API key.")
+        return
 
-    # 🟢 Mock Data: Simulating real scraping process
-    scraped_locations = [
-        {"name": "Venue 1", "lat": 40.748817, "lng": -73.985428},  # Empire State
-        {"name": "Parking Lot", "lat": 40.748217, "lng": -73.986528}
-    ]
+    # Example query: Find parking locations near a city
+    search_query = "parking near New York"
+    url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={search_query}&key={GOOGLE_MAPS_API_KEY}"
 
-    return jsonify({"message": "Scraping completed", "locations": scraped_locations}), 200
+    response = requests.get(url)
+    data = response.json()
 
-# 6️⃣ **Google Geocoding API**
-@app.route("/geocode", methods=["GET"])
-def geocode():
-    address = request.args.get("address")
-    if not address:
-        return jsonify({"error": "Missing address"}), 400
-    result = gmaps.geocode(address)
-    return jsonify(result)
+    if "results" not in data:
+        print("❌ ERROR: No results found in API response.")
+        return
 
-# 7️⃣ **Generate & Serve GeoJSON with Polygons**
-@app.route("/generate_geojson", methods=["POST"])
-def generate_geojson():
-    if not scraped_locations:
-        return jsonify({"error": "No locations found"}), 400
-
-    # Generate GeoJSON with Polygon Example
-    geojson = {
+    # Prepare GeoJSON structure
+    geojson_data = {
         "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[
-                        [loc["lng"] - 0.0005, loc["lat"] - 0.0005],  # Bottom-left
-                        [loc["lng"] + 0.0005, loc["lat"] - 0.0005],  # Bottom-right
-                        [loc["lng"] + 0.0005, loc["lat"] + 0.0005],  # Top-right
-                        [loc["lng"] - 0.0005, loc["lat"] + 0.0005],  # Top-left
-                        [loc["lng"] - 0.0005, loc["lat"] - 0.0005]   # Closing point
-                    ]]
-                },
-                "properties": {"name": loc["name"]}
-            } for loc in scraped_locations
-        ]
+        "features": []
     }
 
+    # Prepare KML structure
+    kml_data = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    kml_data += '<kml xmlns="http://www.opengis.net/kml/2.2">\n'
+    kml_data += "<Document>\n"
+
+    for place in data["results"]:
+        lat = place["geometry"]["location"]["lat"]
+        lng = place["geometry"]["location"]["lng"]
+        name = place["name"]
+        address = place.get("formatted_address", "No address")
+
+        # Add to GeoJSON
+        geojson_data["features"].append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [lng, lat]
+            },
+            "properties": {
+                "name": name,
+                "address": address,
+                "rating": place.get("rating", "No rating")
+            }
+        })
+
+        # Add to KML
+        kml_data += f'<Placemark>\n'
+        kml_data += f'  <name>{name}</name>\n'
+        kml_data += f'  <description>{address}</description>\n'
+        kml_data += f'  <Point>\n'
+        kml_data += f'    <coordinates>{lng},{lat},0</coordinates>\n'
+        kml_data += f'  </Point>\n'
+        kml_data += f'</Placemark>\n'
+
+    kml_data += "</Document>\n"
+    kml_data += "</kml>\n"
+
     # Save GeoJSON
-    with open("static/events.geojson", "w") as f:
-        json.dump(geojson, f)
+    with open("static/events.geojson", "w") as geojson_file:
+        json.dump(geojson_data, geojson_file, indent=2)
 
-    return jsonify({"message": "GeoJSON file created", "file": "/static/events.geojson"}), 200
+    # Save KML
+    with open("static/events.kml", "w") as kml_file:
+        kml_file.write(kml_data)
 
+    print("✅ Scraping Complete! Files saved: events.geojson & events.kml")
+
+
+### ✅ ROUTE: Start Scraping ###
+@app.route("/start_scraping", methods=["POST"])
+def start_scraping():
+    scrape_data()
+    return jsonify({"message": "Scraping started successfully!"})
+
+
+### ✅ ROUTE: Serve Static Files (GeoJSON & KML) ###
 @app.route("/static/<path:filename>")
 def serve_static(filename):
     return send_from_directory("static", filename)
 
-# 8️⃣ **Generate & Serve KML**
-@app.route("/generate_kml", methods=["POST"])
-def generate_kml():
-    if not scraped_locations:
-        return jsonify({"error": "No locations found"}), 400
 
-    kml_content = """<?xml version="1.0" encoding="UTF-8"?>
-    <kml xmlns="http://www.opengis.net/kml/2.2">
-    <Document>"""
-
-    for loc in scraped_locations:
-        kml_content += f"""
-        <Placemark>
-            <name>{loc['name']}</name>
-            <Polygon>
-                <outerBoundaryIs>
-                    <LinearRing>
-                        <coordinates>
-                            {loc["lng"] - 0.0005},{loc["lat"] - 0.0005},0
-                            {loc["lng"] + 0.0005},{loc["lat"] - 0.0005},0
-                            {loc["lng"] + 0.0005},{loc["lat"] + 0.0005},0
-                            {loc["lng"] - 0.0005},{loc["lat"] + 0.0005},0
-                            {loc["lng"] - 0.0005},{loc["lat"] - 0.0005},0
-                        </coordinates>
-                    </LinearRing>
-                </outerBoundaryIs>
-            </Polygon>
-        </Placemark>"""
-
-    kml_content += """</Document></kml>"""
-
-    with open("static/events.kml", "w") as f:
-        f.write(kml_content)
-
-    return jsonify({"message": "KML file created", "file": "/static/events.kml"}), 200
-
-# 9️⃣ **Run App**
+# Run the Flask app
 if __name__ == "__main__":
     app.run(debug=True)
