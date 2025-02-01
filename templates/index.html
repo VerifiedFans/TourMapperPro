@@ -3,101 +3,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tourmapper Pro</title>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
-        .container { max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px; }
-        textarea { width: 100%; height: 100px; margin-bottom: 10px; }
-        button { padding: 10px; margin: 5px; cursor: pointer; }
-        #response { margin-top: 20px; padding: 10px; border-radius: 5px; display: none; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Tourmapper Pro</h1>
-
-        <!-- Upload URLs -->
-        <h3>Upload Venue URLs</h3>
-        <textarea id="url_input" placeholder="Enter URLs (one per line)..."></textarea>
-        <button onclick="uploadUrls()">Upload URLs</button>
-
-        <!-- View Stored URLs -->
-        <h3>Stored URLs</h3>
-        <button onclick="viewUrls()">View Stored URLs</button>
-        <div id="stored_urls"></div>
-
-        <!-- Clear URLs -->
-        <h3>Clear URLs</h3>
-        <button onclick="clearUrls()">Clear Stored URLs</button>
-
-        <!-- Start Scraping -->
-        <h3>Start Scraping</h3>
-        <button onclick="startScraping()">Start Scraping</button>
-
-        <!-- Response Box -->
-        <div id="response"></div>
-
-        <!-- Download KML & GeoJSON -->
-        <h3>Download Files</h3>
-        <a href="/static/events.kml" download><button>Download KML</button></a>
-        <a href="/static/events.geojson" download><button>Download GeoJSON</button></a>
-    </div>
-
+    <title>TourMapper Pro</title>
     <script>
-        function showResponse(message, success = true) {
-            $('#response').html(message).css("background", success ? "#c8e6c9" : "#ffcdd2").fadeIn();
-            setTimeout(() => $('#response').fadeOut(), 5000);
+        async function uploadUrls() {
+            let urls = document.getElementById("urls").value.split("\n").filter(url => url.trim() !== "");
+            let response = await fetch("/upload_urls", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ urls })
+            });
+            let result = await response.json();
+            alert(result.message);
         }
 
-        function uploadUrls() {
-            const urls = $('#url_input').val().trim().split("\n").filter(url => url);
-            if (urls.length === 0) return showResponse("No URLs entered.", false);
-
-            $.ajax({
-                url: "/upload_urls",
-                type: "POST",
-                contentType: "application/json",  // ✅ Correct JSON format
-                data: JSON.stringify({ urls: urls }),
-                success: (response) => showResponse(response.message),
-                error: (xhr) => {
-                    let msg = xhr.responseJSON ? xhr.responseJSON.message : "Error uploading URLs.";
-                    showResponse(msg, false);
-                }
-            });
+        async function startScraping() {
+            let response = await fetch("/start_scraping", { method: "POST" });
+            let result = await response.json();
+            alert(result.message);
         }
 
-        function viewUrls() {
-            $.get("/view_urls", function(response) {
-                if (response.urls.length === 0) {
-                    $('#stored_urls').html("<p>No stored URLs.</p>");
-                } else {
-                    $('#stored_urls').html("<ul>" + response.urls.map(url => `<li>${url}</li>`).join("") + "</ul>");
-                }
-            }).fail((xhr) => {
-                let msg = xhr.responseJSON ? xhr.responseJSON.message : "Error retrieving stored URLs.";
-                showResponse(msg, false);
-            });
-        }
-
-        function clearUrls() {
-            $.post("/clear_urls", function(response) {
-                showResponse(response.message);
-                $('#stored_urls').html("");
-            }).fail((xhr) => {
-                let msg = xhr.responseJSON ? xhr.responseJSON.message : "Error clearing URLs.";
-                showResponse(msg, false);
-            });
-        }
-
-        function startScraping() {
-            $.post("/start_scraping", function(response) {
-                showResponse(response.message);
-            }).fail((xhr) => {
-                let msg = xhr.responseJSON ? xhr.responseJSON.message : "Error starting scraping.";
-                showResponse(msg, false);
-            });
+        async function clearUrls() {
+            let response = await fetch("/clear_urls", { method: "POST" });
+            let result = await response.json();
+            alert(result.message);
         }
     </script>
+</head>
+<body>
+    <h1>TourMapper Pro</h1>
+
+    <h3>Upload URLs</h3>
+    <textarea id="urls" rows="5" cols="40"></textarea><br>
+    <button onclick="uploadUrls()">Upload URLs</button>
+
+    <h3>Scraping</h3>
+    <button onclick="startScraping()">Start Scraping</button>
+    <button onclick="clearUrls()">Clear URLs</button>
+
+    <h3>Download Data</h3>
+    <a href="/static/events.geojson" download>Download GeoJSON</a> |
+    <a href="/static/events.kml" download>Download KML</a>
+
+    <h3>View Uploaded URLs</h3>
+    <a href="/view_urls">View URLs</a>
 </body>
 </html>
