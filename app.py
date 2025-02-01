@@ -47,20 +47,22 @@ def clear_urls():
     scraped_locations = []
     return jsonify({"message": "URLs and scraped data cleared"}), 200
 
-# 5️⃣ **Start Scraping (Mock Function)**
+# 5️⃣ **Start Scraping (Fixed Function)**
 @app.route("/start_scraping", methods=["POST"])
 def start_scraping():
     global scraped_locations
 
-    # Mock data: Simulating scraping lat/lng from stored URLs
-    if stored_urls:
-        scraped_locations = [
-            {"name": "Venue 1", "lat": 40.748817, "lng": -73.985428},  # Example: Empire State
-            {"name": "Parking Lot", "lat": 40.748217, "lng": -73.986528}
-        ]
-        return jsonify({"message": "Scraping completed", "locations": scraped_locations}), 200
-    else:
+    # 🔴 Fix: Check if URLs exist before scraping
+    if not stored_urls:
         return jsonify({"error": "No URLs to scrape"}), 400
+
+    # 🟢 Mock Data: Simulating real scraping process
+    scraped_locations = [
+        {"name": "Venue 1", "lat": 40.748817, "lng": -73.985428},  # Empire State
+        {"name": "Parking Lot", "lat": 40.748217, "lng": -73.986528}
+    ]
+
+    return jsonify({"message": "Scraping completed", "locations": scraped_locations}), 200
 
 # 6️⃣ **Google Geocoding API**
 @app.route("/geocode", methods=["GET"])
