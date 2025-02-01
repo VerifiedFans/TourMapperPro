@@ -1,138 +1,152 @@
 import os
 import json
 import requests
-from flask import Flask, request, jsonify, render_template, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__)
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "your_api_key")
 
-# Load API Key from environment variable
-GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
-
-# Store uploaded URLs
 uploaded_urls = []
 
-
-### ✅ ROUTE: Home Page ###
-@app.route("/")
-def home():
-    return render_template("index.html")
-
-
-### ✅ ROUTE: Upload URLs ###
+# Upload URLs
 @app.route("/upload_urls", methods=["POST"])
 def upload_urls():
     global uploaded_urls
     data = request.json
     urls = data.get("urls", [])
-
     if not urls:
         return jsonify({"error": "No URLs provided"}), 400
+    uploaded_urls = urls
+    return jsonify({"message": "URLs uploaded successfully", "urls": urls})
 
-    uploaded_urls.extend(urls)
-    return jsonify({"message": "URLs uploaded successfully!", "urls": uploaded_urls})
+# Scrape Data and Fetch Venue Footprints + Nearby Parking
+@app.route("/start_scraping", methods=["POST"])
+def start_scraping():
+    if not uploaded_urls:
+        return jsonify({"error": "No URLs uploaded"}), 400
 
-
-### ✅ ROUTE: View Uploaded URLs ###
-@app.route("/view_urls", methods=["GET"])
-def view_urls():
-    return render_template("view_urls.html", urls=uploaded_urls)
-
-
-### ✅ ROUTE: Clear Uploaded URLs ###
-@app.route("/clear_urls", methods=["POST"])
-def clear_urls():
-    global uploaded_urls
-    uploaded_urls = []
-    return jsonify({"message": "URLs cleared successfully!"})
-
-
-### ✅ FUNCTION: Scrape Google Places API ###
-def scrape_data():
-    """
-    Uses Google Places API to find locations, generate GeoJSON & KML.
-    """
-    if not GOOGLE_MAPS_API_KEY:
-        print("❌ ERROR: Missing Google Maps API key.")
-        return
-
-    # Example query: Find parking locations near a city
-    search_query = "parking near New York"
-    url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={search_query}&key={GOOGLE_MAPS_API_KEY}"
-
-    response = requests.get(url)
-    data = response.json()
-
-    if "results" not in data:
-        print("❌ ERROR: No results found in API response.")
-        return
-
-    # Prepare GeoJSON structure
     geojson_data = {
         "type": "FeatureCollection",
         "features": []
     }
 
-    # Prepare KML structure
-    kml_data = '<?xml version="1.0" encoding="UTF-8"?>\n'
-    kml_data += '<kml xmlns="http://www.opengis.net/kml/2.2">\n'
-    kml_data += "<Document>\n"
+    for url in uploaded_urls:
+        coordinates = extract_coordinates_from_url(url)
+        if coordinates:
+            venue_polygon = get_venue_footprint(coordinates)
+            parking_spots = get_nearby_parking(coordinates)
+            if venue_polygon:
+                geojson_data["features"].append(venue_polygon)
+            geojson_data["features"].extend(parking_spots)
 
-    for place in data["results"]:
-        lat = place["geometry"]["location"]["lat"]
-        lng = place["geometry"]["location"]["lng"]
-        name = place["name"]
-        address = place.get("formatted_address", "No address")
-
-        # Add to GeoJSON
-        geojson_data["features"].append({
-            "type": "Feature",
-            "geometry": {
-                "type": "Point",
-                "coordinates": [lng, lat]
-            },
-            "properties": {
-                "name": name,
-                "address": address,
-                "rating": place.get("rating", "No rating")
-            }
-        })
-
-        # Add to KML
-        kml_data += f'<Placemark>\n'
-        kml_data += f'  <name>{name}</name>\n'
-        kml_data += f'  <description>{address}</description>\n'
-        kml_data += f'  <Point>\n'
-        kml_data += f'    <coordinates>{lng},{lat},0</coordinates>\n'
-        kml_data += f'  </Point>\n'
-        kml_data += f'</Placemark>\n'
-
-    kml_data += "</Document>\n"
-    kml_data += "</kml>\n"
-
-    # Save GeoJSON
     with open("static/events.geojson", "w") as geojson_file:
-        json.dump(geojson_data, geojson_file, indent=2)
+        json.dump(geojson_data, geojson_file)
 
-    # Save KML
-    with open("static/events.kml", "w") as kml_file:
-        kml_file.write(kml_data)
+    return jsonify({"message": "Scraping completed, GeoJSON saved"}), 200
 
-    print("✅ Scraping Complete! Files saved: events.geojson & events.kml")
+# Extract Coordinates from URL
+def extract_coordinates_from_url(url):
+    """Extracts latitude and longitude from a Google Maps URL."""
+    if "@" in url:
+        parts = url.split("@")[1].split(",")
+        try:
+            lat, lon = float(parts[0]), float(parts[1])
+            return lat, lon
+        except ValueError:
+            return None
+    return None
 
+# Get Venue Footprint (Polygon)
+def get_venue_footprint(coordinates):
+    lat, lon = coordinates
+    places_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+    params = {
+        "location": f"{lat},{lon}",
+        "radius": 50,  # Small radius to focus on venue
+        "type": "point_of_interest",
+        "key": GOOGLE_MAPS_API_KEY
+    }
 
-### ✅ ROUTE: Start Scraping ###
-@app.route("/start_scraping", methods=["POST"])
-def start_scraping():
-    scrape_data()
-    return jsonify({"message": "Scraping started successfully!"})
+    response = requests.get(places_url, params=params)
+    data = response.json()
 
+    if "results" in data and data["results"]:
+        place_id = data["results"][0]["place_id"]
+        details_url = "https://maps.googleapis.com/maps/api/place/details/json"
+        details_params = {
+            "place_id": place_id,
+            "fields": "geometry",
+            "key": GOOGLE_MAPS_API_KEY
+        }
 
-### ✅ ROUTE: Serve Static Files (GeoJSON & KML) ###
+        details_response = requests.get(details_url, params=details_params)
+        details_data = details_response.json()
+
+        if "result" in details_data and "geometry" in details_data["result"]:
+            geometry = details_data["result"]["geometry"]
+            if "viewport" in geometry:
+                northeast = geometry["viewport"]["northeast"]
+                southwest = geometry["viewport"]["southwest"]
+                polygon = {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [northeast["lng"], northeast["lat"]],
+                            [southwest["lng"], northeast["lat"]],
+                            [southwest["lng"], southwest["lat"]],
+                            [northeast["lng"], southwest["lat"]],
+                            [northeast["lng"], northeast["lat"]]
+                        ]]
+                    },
+                    "properties": {
+                        "name": data["results"][0]["name"],
+                        "address": data["results"][0]["vicinity"]
+                    }
+                }
+                return polygon
+    return None
+
+# Get Nearby Parking
+def get_nearby_parking(coordinates):
+    lat, lon = coordinates
+    places_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+    params = {
+        "location": f"{lat},{lon}",
+        "radius": 1000,  # Search within 1km
+        "type": "parking",
+        "key": GOOGLE_MAPS_API_KEY
+    }
+
+    response = requests.get(places_url, params=params)
+    data = response.json()
+
+    features = []
+    if "results" in data:
+        for place in data["results"]:
+            feature = {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [
+                        place["geometry"]["location"]["lng"],
+                        place["geometry"]["location"]["lat"]
+                    ]
+                },
+                "properties": {
+                    "name": place["name"],
+                    "address": place.get("vicinity", "Unknown"),
+                    "rating": place.get("rating", "N/A")
+                }
+            }
+            features.append(feature)
+
+    return features
+
+# Serve static files
 @app.route("/static/<path:filename>")
 def serve_static(filename):
     return send_from_directory("static", filename)
 
-
-# Run the Flask app
 if __name__ == "__main__":
     app.run(debug=True)
