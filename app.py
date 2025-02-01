@@ -6,16 +6,17 @@ from flask import Flask, request, jsonify, render_template, send_from_directory
 # Initialize Flask app
 app = Flask(__name__)
 
-# Ensure `static/` exists for storing files
+# Ensure `static/` exists
 if not os.path.exists("static"):
     os.makedirs("static")
 
-# Load Google API Key from environment variables
+# Load Google API Key
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
 
-# Store URLs in memory
+# Store URLs and scraped locations
 stored_urls = []
+scraped_locations = []
 
 # 1️⃣ **Home Page**
 @app.route("/")
@@ -41,25 +42,27 @@ def view_urls():
 # 4️⃣ **Clear Stored URLs**
 @app.route("/clear_urls", methods=["POST"])
 def clear_urls():
-    global stored_urls
+    global stored_urls, scraped_locations
     stored_urls = []
-    return jsonify({"message": "URLs cleared"}), 200
+    scraped_locations = []
+    return jsonify({"message": "URLs and scraped data cleared"}), 200
 
 # 5️⃣ **Start Scraping (Mock Function)**
 @app.route("/start_scraping", methods=["POST"])
 def start_scraping():
-    return jsonify({"message": "Scraping started"}), 200
+    global scraped_locations
 
-# 6️⃣ **Google Places API - Get Place Details**
-@app.route("/get_place_details", methods=["GET"])
-def get_place_details():
-    place_id = request.args.get("place_id")
-    if not place_id:
-        return jsonify({"error": "Missing place_id"}), 400
-    details = gmaps.place(place_id=place_id)
-    return jsonify(details)
+    # Mock data: Simulating scraping lat/lng from stored URLs
+    if stored_urls:
+        scraped_locations = [
+            {"name": "Venue 1", "lat": 40.748817, "lng": -73.985428},  # Example: Empire State
+            {"name": "Parking Lot", "lat": 40.748217, "lng": -73.986528}
+        ]
+        return jsonify({"message": "Scraping completed", "locations": scraped_locations}), 200
+    else:
+        return jsonify({"error": "No URLs to scrape"}), 400
 
-# 7️⃣ **Google Geocoding API - Get Lat/Lng**
+# 6️⃣ **Google Geocoding API**
 @app.route("/geocode", methods=["GET"])
 def geocode():
     address = request.args.get("address")
@@ -68,52 +71,71 @@ def geocode():
     result = gmaps.geocode(address)
     return jsonify(result)
 
-# 8️⃣ **Generate & Serve GeoJSON**
+# 7️⃣ **Generate & Serve GeoJSON with Polygons**
 @app.route("/generate_geojson", methods=["POST"])
 def generate_geojson():
-    data = request.json
-    features = []
+    if not scraped_locations:
+        return jsonify({"error": "No locations found"}), 400
 
-    for location in data.get("locations", []):
-        lat, lng = location.get("lat"), location.get("lng")
-        if lat and lng:
-            feature = {
+    # Generate GeoJSON with Polygon Example
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
                 "type": "Feature",
-                "geometry": {"type": "Point", "coordinates": [lng, lat]},
-                "properties": {"name": location.get("name", "Unknown")}
-            }
-            features.append(feature)
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [loc["lng"] - 0.0005, loc["lat"] - 0.0005],  # Bottom-left
+                        [loc["lng"] + 0.0005, loc["lat"] - 0.0005],  # Bottom-right
+                        [loc["lng"] + 0.0005, loc["lat"] + 0.0005],  # Top-right
+                        [loc["lng"] - 0.0005, loc["lat"] + 0.0005],  # Top-left
+                        [loc["lng"] - 0.0005, loc["lat"] - 0.0005]   # Closing point
+                    ]]
+                },
+                "properties": {"name": loc["name"]}
+            } for loc in scraped_locations
+        ]
+    }
 
-    geojson = {"type": "FeatureCollection", "features": features}
-    
+    # Save GeoJSON
     with open("static/events.geojson", "w") as f:
         json.dump(geojson, f)
-    
+
     return jsonify({"message": "GeoJSON file created", "file": "/static/events.geojson"}), 200
 
 @app.route("/static/<path:filename>")
 def serve_static(filename):
     return send_from_directory("static", filename)
 
-# 9️⃣ **Generate & Serve KML**
+# 8️⃣ **Generate & Serve KML**
 @app.route("/generate_kml", methods=["POST"])
 def generate_kml():
-    data = request.json
+    if not scraped_locations:
+        return jsonify({"error": "No locations found"}), 400
+
     kml_content = """<?xml version="1.0" encoding="UTF-8"?>
     <kml xmlns="http://www.opengis.net/kml/2.2">
     <Document>"""
 
-    for location in data.get("locations", []):
-        lat, lng = location.get("lat"), location.get("lng")
-        name = location.get("name", "Unknown")
-        if lat and lng:
-            kml_content += f"""
-            <Placemark>
-                <name>{name}</name>
-                <Point>
-                    <coordinates>{lng},{lat},0</coordinates>
-                </Point>
-            </Placemark>"""
+    for loc in scraped_locations:
+        kml_content += f"""
+        <Placemark>
+            <name>{loc['name']}</name>
+            <Polygon>
+                <outerBoundaryIs>
+                    <LinearRing>
+                        <coordinates>
+                            {loc["lng"] - 0.0005},{loc["lat"] - 0.0005},0
+                            {loc["lng"] + 0.0005},{loc["lat"] - 0.0005},0
+                            {loc["lng"] + 0.0005},{loc["lat"] + 0.0005},0
+                            {loc["lng"] - 0.0005},{loc["lat"] + 0.0005},0
+                            {loc["lng"] - 0.0005},{loc["lat"] - 0.0005},0
+                        </coordinates>
+                    </LinearRing>
+                </outerBoundaryIs>
+            </Polygon>
+        </Placemark>"""
 
     kml_content += """</Document></kml>"""
 
@@ -122,6 +144,6 @@ def generate_kml():
 
     return jsonify({"message": "KML file created", "file": "/static/events.kml"}), 200
 
-# 1️⃣0️⃣ **Run App**
+# 9️⃣ **Run App**
 if __name__ == "__main__":
     app.run(debug=True)
