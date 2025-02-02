@@ -4,26 +4,80 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 20px;
+        }
+        #map {
+            height: 500px;
+            width: 80%;
+            margin: auto;
+            border: 1px solid #ccc;
+        }
+        .button {
+            display: inline-block;
+            margin: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            color: white;
+            background-color: #007bff;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        .button:hover {
+            background-color: #0056b3;
+        }
+    </style>
 </head>
 <body>
-    <h1>Upload Event URLs</h1>
-    <textarea id="urlInput" rows="5" cols="50" placeholder="Enter event URLs (one per line)"></textarea><br>
-    <button onclick="startScraping()">Start Scraping</button>
-    <p id="status"></p>
+    <h1>Welcome to TourMapper Pro</h1>
+
+    <!-- File Upload Button -->
+    <input type="file" id="fileInput" accept=".txt,.csv" style="margin: 10px;">
+    <button class="button" onclick="uploadUrls()">Upload URLs</button>
+
+    <!-- Start Scraping Button -->
+    <button class="button" onclick="startScraping()">Start Scraping</button>
+
+    <!-- Download GeoJSON Button -->
+    <a href="/static/events.geojson" download="events.geojson" class="button">Download GeoJSON</a>
+
+    <!-- Map Display (Optional, Can Be Removed) -->
+    <div id="map"></div>
 
     <script>
-        function startScraping() {
-            const urls = document.getElementById("urlInput").value.split("\n").map(u => u.trim()).filter(u => u);
-            document.getElementById("status").innerText = "Processing... Please wait.";
+        function uploadUrls() {
+            let fileInput = document.getElementById("fileInput");
+            if (fileInput.files.length === 0) {
+                alert("Please select a file first.");
+                return;
+            }
 
-            fetch('/start_scraping', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ urls })
-            })
-            .then(response => response.json())
-            .then(data => document.getElementById("status").innerText = data.message)
-            .catch(error => document.getElementById("status").innerText = "Error processing request.");
+            let file = fileInput.files[0];
+            let reader = new FileReader();
+            reader.onload = function(event) {
+                let urls = event.target.result.split("\n").map(url => url.trim()).filter(url => url);
+                
+                fetch('/upload_urls', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ urls: urls })
+                })
+                .then(response => response.json())
+                .then(data => alert(data.message))
+                .catch(error => console.error('Error uploading URLs:', error));
+            };
+            reader.readAsText(file);
+        }
+
+        function startScraping() {
+            fetch('/start_scraping', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => alert(data.message));
         }
     </script>
 </body>
