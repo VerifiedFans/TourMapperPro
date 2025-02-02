@@ -1,50 +1,51 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
-    <script>
-        async function uploadUrls() {
-            let urls = document.getElementById("urls").value.split("\n").filter(url => url.trim() !== "");
-            let response = await fetch("/upload_urls", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ urls })
-            });
-            let result = await response.json();
-            alert(result.message);
-        }
-
-        async function startScraping() {
-            let response = await fetch("/start_scraping", { method: "POST" });
-            let result = await response.json();
-            alert(result.message);
-        }
-
-        async function clearUrls() {
-            let response = await fetch("/clear_urls", { method: "POST" });
-            let result = await response.json();
-            alert(result.message);
-        }
-    </script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=initMap" async defer></script>
 </head>
 <body>
-    <h1>TourMapper Pro</h1>
-
-    <h3>Upload URLs</h3>
-    <textarea id="urls" rows="5" cols="40"></textarea><br>
-    <button onclick="uploadUrls()">Upload URLs</button>
-
-    <h3>Scraping</h3>
+    <h1>Welcome to TourMapper Pro</h1>
+    
     <button onclick="startScraping()">Start Scraping</button>
-    <button onclick="clearUrls()">Clear URLs</button>
+    <a href="/static/events.geojson" download="events.geojson">Download GeoJSON</a>
+    
+    <div id="map" style="height: 500px;"></div>
 
-    <h3>Download Data</h3>
-    <a href="/static/events.geojson" download>Download GeoJSON</a> |
-    <a href="/static/events.kml" download>Download KML</a>
+    <script>
+        function startScraping() {
+            fetch('/start_scraping', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => alert(data.message));
+        }
 
-    <h3>View Uploaded URLs</h3>
-    <a href="/view_urls">View URLs</a>
+        function initMap() {
+            var map = new google.maps.Map(document.getElementById('map'), {
+                zoom: 12,
+                center: { lat: 40.758, lng: -73.985 }
+            });
+
+            fetch('/static/events.geojson')
+                .then(response => response.json())
+                .then(data => {
+                    data.features.forEach(feature => {
+                        if (feature.geometry.type === "Polygon") {
+                            var polygon = new google.maps.Polygon({
+                                paths: feature.geometry.coordinates[0].map(coord => ({ lat: coord[1], lng: coord[0] })),
+                                strokeColor: feature.properties.type === "Venue" ? "#FF0000" : "#0000FF",
+                                strokeOpacity: 0.8,
+                                strokeWeight: 2,
+                                fillColor: feature.properties.type === "Venue" ? "#FF0000" : "#0000FF",
+                                fillOpacity: 0.35,
+                                map: map
+                            });
+                        }
+                    });
+                });
+        }
+    </script>
 </body>
 </html>
