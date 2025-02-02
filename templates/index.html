@@ -4,116 +4,73 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-            margin: 20px;
-        }
-        #drop-zone {
-            width: 80%;
-            margin: auto;
-            padding: 30px;
-            border: 2px dashed #007bff;
-            background-color: #f8f9fa;
-            text-align: center;
-            font-size: 18px;
-            color: #007bff;
-            cursor: pointer;
-        }
-        #drop-zone:hover {
-            background-color: #e9ecef;
-        }
-        #map {
-            height: 500px;
-            width: 80%;
-            margin: auto;
-            border: 1px solid #ccc;
-        }
-        .button {
-            display: inline-block;
-            margin: 10px;
-            padding: 10px 20px;
-            font-size: 16px;
-            color: white;
-            background-color: #007bff;
-            border: none;
-            cursor: pointer;
-            border-radius: 5px;
-        }
-        .button:hover {
-            background-color: #0056b3;
-        }
+        body { font-family: Arial, sans-serif; text-align: center; }
+        #drop-zone { border: 2px dashed #ccc; padding: 20px; width: 50%; margin: auto; cursor: pointer; }
+        #fileInput { display: none; }
+        #map { height: 500px; margin-top: 20px; }
     </style>
 </head>
 <body>
+
     <h1>Welcome to TourMapper Pro</h1>
 
-    <!-- Drag-and-Drop Zone -->
-    <div id="drop-zone">Drag & Drop URL File Here or Click to Select</div>
-    <input type="file" id="fileInput" accept=".txt,.csv" style="display: none;">
+    <div id="drop-zone">
+        <p>Drag & Drop Your URLs File Here or Click to Select</p>
+        <input type="file" id="fileInput" accept=".txt,.csv">
+    </div>
 
-    <!-- Buttons -->
-    <button class="button" onclick="startScraping()">Start Scraping</button>
-    <a href="/static/events.geojson" download="events.geojson" class="button">Download GeoJSON</a>
-
-    <!-- Map Display (Optional) -->
-    <div id="map"></div>
+    <button id="startScraping">Start Processing</button>
+    <a id="downloadGeoJSON" style="display: none;" href="#">Download GeoJSON</a>
 
     <script>
-        let dropZone = document.getElementById("drop-zone");
-        let fileInput = document.getElementById("fileInput");
+        let uploadedFile;
 
-        dropZone.addEventListener("click", function() {
-            fileInput.click();
+        document.getElementById("drop-zone").addEventListener("click", () => document.getElementById("fileInput").click());
+        document.getElementById("fileInput").addEventListener("change", function(event) {
+            uploadedFile = event.target.files[0];
+            processFile(uploadedFile);
         });
 
-        dropZone.addEventListener("dragover", function(event) {
+        document.getElementById("drop-zone").addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); });
+        document.getElementById("drop-zone").addEventListener("drop", function(event) {
             event.preventDefault();
-            dropZone.style.backgroundColor = "#e9ecef";
-        });
-
-        dropZone.addEventListener("dragleave", function(event) {
-            dropZone.style.backgroundColor = "#f8f9fa";
-        });
-
-        dropZone.addEventListener("drop", function(event) {
-            event.preventDefault();
-            dropZone.style.backgroundColor = "#f8f9fa";
-
-            let file = event.dataTransfer.files[0];
-            processFile(file);
-        });
-
-        fileInput.addEventListener("change", function(event) {
-            let file = event.target.files[0];
-            processFile(file);
+            uploadedFile = event.dataTransfer.files[0];
+            processFile(uploadedFile);
         });
 
         function processFile(file) {
             if (!file) return alert("No file selected.");
             let reader = new FileReader();
             reader.onload = function(event) {
-                let urls = event.target.result.split("\n").map(url => url.trim()).filter(url => url);
-                
+                let urls = event.target.result.split("\n")
+                    .map(url => url.trim())
+                    .filter(url => url.startsWith("http")); // Only keep valid URLs
+
                 fetch('/upload_urls', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ urls: urls })
                 })
                 .then(response => response.json())
-                .then(data => alert(data.message))
+                .then(data => {
+                    alert(data.message);
+                    if (data.download) {
+                        let downloadLink = document.getElementById("downloadGeoJSON");
+                        downloadLink.href = data.download;
+                        downloadLink.style.display = "block";
+                    }
+                })
                 .catch(error => console.error('Error uploading URLs:', error));
             };
             reader.readAsText(file);
         }
 
-        function startScraping() {
-            fetch('/start_scraping', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => alert(data.message));
-        }
+        document.getElementById("startScraping").addEventListener("click", function() {
+            if (!uploadedFile) return alert("Please upload a file first!");
+            processFile(uploadedFile);
+        });
     </script>
+
 </body>
 </html>
