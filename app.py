@@ -1,4 +1,3 @@
-
 import os
 import json
 import requests
@@ -106,6 +105,7 @@ def venue_info(venue_name):
 
     # Save GeoJSON to file
     geojson_path = os.path.join("static", "events.geojson")
+    os.makedirs("static", exist_ok=True)  # Ensure static directory exists
     with open(geojson_path, "w") as geojson_file:
         json.dump(geojson_response, geojson_file, indent=4)
 
