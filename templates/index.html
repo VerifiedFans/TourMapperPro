@@ -5,72 +5,115 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; }
-        #drop-zone { border: 2px dashed #ccc; padding: 20px; width: 50%; margin: auto; cursor: pointer; }
-        #fileInput { display: none; }
-        #map { height: 500px; margin-top: 20px; }
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        #drop-zone {
+            width: 80%;
+            margin: auto;
+            padding: 20px;
+            border: 2px dashed #007BFF;
+            background-color: #f9f9f9;
+            cursor: pointer;
+        }
+        #url-list {
+            margin-top: 20px;
+            text-align: left;
+        }
+        #logo {
+            max-width: 200px;
+            margin: 20px auto;
+        }
+        button {
+            padding: 10px;
+            margin: 10px;
+            cursor: pointer;
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
     </style>
 </head>
 <body>
+    <img id="logo" src="/static/logo.png" alt="TourMapper Pro Logo">
 
     <h1>Welcome to TourMapper Pro</h1>
 
-    <div id="drop-zone">
-        <p>Drag & Drop Your URLs File Here or Click to Select</p>
-        <input type="file" id="fileInput" accept=".txt,.csv">
+    <div id="drop-zone" ondrop="dropHandler(event)" ondragover="dragOverHandler(event)">
+        Drag & Drop your URL file here (TXT or CSV)
     </div>
 
-    <button id="startScraping">Start Processing</button>
-    <a id="downloadGeoJSON" style="display: none;" href="#">Download GeoJSON</a>
+    <input type="file" id="file-input" style="display: none;" onchange="uploadFile(event)">
+    <button onclick="document.getElementById('file-input').click()">Upload File</button>
+
+    <button onclick="fetchURLs()">View Uploaded URLs</button>
+    <button onclick="clearURLs()">Clear Uploaded URLs</button>
+    <button onclick="downloadGeoJSON()">Download GeoJSON</button>
+
+    <div id="url-list"></div>
 
     <script>
-        let uploadedFile;
+        function uploadFile(event) {
+            let file = event.target.files[0];
+            if (!file) return;
 
-        document.getElementById("drop-zone").addEventListener("click", () => document.getElementById("fileInput").click());
-        document.getElementById("fileInput").addEventListener("change", function(event) {
-            uploadedFile = event.target.files[0];
-            processFile(uploadedFile);
-        });
+            let formData = new FormData();
+            formData.append("file", file);
 
-        document.getElementById("drop-zone").addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); });
-        document.getElementById("drop-zone").addEventListener("drop", function(event) {
+            fetch("/upload", { method: "POST", body: formData })
+                .then(response => response.json())
+                .then(data => alert(data.message))
+                .catch(error => console.error("Error:", error));
+        }
+
+        function dropHandler(event) {
             event.preventDefault();
-            uploadedFile = event.dataTransfer.files[0];
-            processFile(uploadedFile);
-        });
+            let file = event.dataTransfer.files[0];
+            let formData = new FormData();
+            formData.append("file", file);
 
-        function processFile(file) {
-            if (!file) return alert("No file selected.");
-            let reader = new FileReader();
-            reader.onload = function(event) {
-                let urls = event.target.result.split("\n")
-                    .map(url => url.trim())
-                    .filter(url => url.startsWith("http")); // Only keep valid URLs
+            fetch("/upload", { method: "POST", body: formData })
+                .then(response => response.json())
+                .then(data => alert(data.message))
+                .catch(error => console.error("Error:", error));
+        }
 
-                fetch('/upload_urls', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ urls: urls })
+        function dragOverHandler(event) {
+            event.preventDefault();
+        }
+
+        function fetchURLs() {
+            fetch("/view_urls")
+                .then(response => response.json())
+                .then(data => {
+                    let urlList = document.getElementById("url-list");
+                    urlList.innerHTML = "<h3>Uploaded URLs:</h3><ul>" +
+                        data.urls.map(url => `<li>${url}</li>`).join("") +
+                        "</ul>";
                 })
+                .catch(error => console.error("Error:", error));
+        }
+
+        function clearURLs() {
+            fetch("/clear_urls", { method: "POST" })
                 .then(response => response.json())
                 .then(data => {
                     alert(data.message);
-                    if (data.download) {
-                        let downloadLink = document.getElementById("downloadGeoJSON");
-                        downloadLink.href = data.download;
-                        downloadLink.style.display = "block";
-                    }
+                    document.getElementById("url-list").innerHTML = "";
                 })
-                .catch(error => console.error('Error uploading URLs:', error));
-            };
-            reader.readAsText(file);
+                .catch(error => console.error("Error:", error));
         }
 
-        document.getElementById("startScraping").addEventListener("click", function() {
-            if (!uploadedFile) return alert("Please upload a file first!");
-            processFile(uploadedFile);
-        });
+        function downloadGeoJSON() {
+            fetch("/download_geojson")
+                .then(response => response.json())
+                .then(data => {
+                    window.location.href = data.file_url;
+                })
+                .catch(error => console.error("Error:", error));
+        }
     </script>
-
 </body>
 </html>
