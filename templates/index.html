@@ -3,65 +3,109 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Venue Mapper</title>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <title>TourMapper Pro</title>
     <style>
-        #progress-container { display: none; width: 100%; text-align: center; }
-        #progress-bar { width: 0%; height: 30px; background-color: green; text-align: center; color: white; line-height: 30px; }
+        body {
+            text-align: center;
+            font-family: Arial, sans-serif;
+        }
+        #logo {
+            width: 200px; /* Adjust size */
+            margin-bottom: 20px;
+        }
+        #fileList {
+            list-style: none;
+            padding: 0;
+        }
+        #progressBar {
+            width: 100%;
+            background-color: #ddd;
+            display: none;
+        }
+        #progressBar div {
+            width: 0%;
+            height: 30px;
+            background-color: #4caf50;
+            text-align: center;
+            line-height: 30px;
+            color: white;
+        }
     </style>
 </head>
 <body>
-    <h1>Upload URL File</h1>
-    <input type="file" id="fileInput">
-    <button onclick="uploadFile()">Upload</button>
 
-    <h2>Generate GeoJSON</h2>
-    <button onclick="startProcessing()">Start</button>
+    <!-- ✅ Logo at the Center -->
+    <img id="logo" src="{{ url_for('static', filename='logo.png') }}" alt="TourMapper Logo">
 
-    <div id="progress-container">
-        <p>Processing...</p>
-        <div style="width: 100%; background-color: #ddd;">
-            <div id="progress-bar">0%</div>
-        </div>
+    <h1>Welcome to TourMapper Pro</h1>
+
+    <!-- ✅ Upload & Process Section -->
+    <input type="file" id="fileInput" multiple>
+    <button onclick="uploadFiles()">Upload URLs</button>
+
+    <h2>Uploaded Files</h2>
+    <button onclick="viewUploadedFiles()">View Uploaded Files</button>
+    <button onclick="clearUploadedFiles()">Clear Files</button>
+
+    <ul id="fileList"></ul>
+
+    <!-- ✅ Progress Bar -->
+    <div id="progressBar">
+        <div id="progressStatus">0%</div>
     </div>
 
-    <button id="downloadBtn" style="display:none;" onclick="downloadGeoJSON()">Download GeoJSON</button>
+    <h2>Download</h2>
+    <a id="downloadLink" href="/static/events.geojson" download="events.geojson" style="display: none;">
+        <button>Download GeoJSON</button>
+    </a>
 
     <script>
-        function uploadFile() {
-            let file = document.getElementById('fileInput').files[0];
+        function uploadFiles() {
+            let files = document.getElementById("fileInput").files;
             let formData = new FormData();
-            formData.append('file', file);
 
-            fetch('/upload', { method: 'POST', body: formData })
-                .then(response => response.json())
-                .then(data => alert(data.message));
+            for (let i = 0; i < files.length; i++) {
+                formData.append("file", files[i]);
+            }
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            }).then(response => response.json())
+              .then(data => {
+                  alert(data.message);
+                  viewUploadedFiles();
+              });
         }
 
-        function startProcessing() {
-            fetch('/start_processing', { method: 'POST' }).then(() => {
-                document.getElementById("progress-container").style.display = "block";
-                checkProgress();
-            });
-        }
-
-        function checkProgress() {
-            fetch('/progress')
+        function viewUploadedFiles() {
+            fetch('/view_uploaded_files')
                 .then(response => response.json())
                 .then(data => {
-                    $("#progress-bar").css("width", data.percent + "%").text(data.percent + "%");
+                    let fileList = document.getElementById("fileList");
+                    fileList.innerHTML = "";
 
-                    if (data.status !== "complete") {
-                        setTimeout(checkProgress, 1000);
+                    if (data.files.length === 0) {
+                        fileList.innerHTML = "<li>No files uploaded.</li>";
                     } else {
-                        $("#downloadBtn").show();
+                        data.files.forEach(file => {
+                            let li = document.createElement("li");
+                            li.textContent = file;
+                            fileList.appendChild(li);
+                        });
                     }
                 });
         }
 
-        function downloadGeoJSON() {
-            window.location.href = "/download_geojson";
+        function clearUploadedFiles() {
+            fetch('/clear_urls', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message);
+                    viewUploadedFiles();
+                });
         }
     </script>
+
 </body>
 </html>
