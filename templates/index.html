@@ -3,116 +3,64 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TourMapper Pro</title>
+    <title>Venue Mapper</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-        }
-        #drop-zone {
-            width: 80%;
-            margin: auto;
-            padding: 20px;
-            border: 2px dashed #007BFF;
-            background-color: #f9f9f9;
-            cursor: pointer;
-        }
-        #url-list {
-            margin-top: 20px;
-            text-align: left;
-        }
-        #logo {
-            max-width: 200px;
-            margin: 20px auto;
-        }
-        button {
-            padding: 10px;
-            margin: 10px;
-            cursor: pointer;
-            background-color: #007BFF;
-            color: white;
-            border: none;
-            border-radius: 5px;
-        }
+        #progress-container { display: none; width: 100%; text-align: center; }
+        #progress-bar { width: 0%; height: 30px; background-color: green; text-align: center; color: white; line-height: 30px; }
     </style>
 </head>
 <body>
-    <img id="logo" src="/static/logo.png" alt="TourMapper Pro Logo">
+    <h1>Upload URL File</h1>
+    <input type="file" id="fileInput">
+    <button onclick="uploadFile()">Upload</button>
 
-    <h1>Welcome to TourMapper Pro</h1>
+    <h2>Generate GeoJSON</h2>
+    <button onclick="startProcessing()">Start</button>
 
-    <div id="drop-zone" ondrop="dropHandler(event)" ondragover="dragOverHandler(event)">
-        Drag & Drop your URL file here (TXT or CSV)
+    <div id="progress-container">
+        <p>Processing...</p>
+        <div style="width: 100%; background-color: #ddd;">
+            <div id="progress-bar">0%</div>
+        </div>
     </div>
 
-    <input type="file" id="file-input" style="display: none;" onchange="uploadFile(event)">
-    <button onclick="document.getElementById('file-input').click()">Upload File</button>
-
-    <button onclick="fetchURLs()">View Uploaded URLs</button>
-    <button onclick="clearURLs()">Clear Uploaded URLs</button>
-    <button onclick="downloadGeoJSON()">Download GeoJSON</button>
-
-    <div id="url-list"></div>
+    <button id="downloadBtn" style="display:none;" onclick="downloadGeoJSON()">Download GeoJSON</button>
 
     <script>
-        function uploadFile(event) {
-            let file = event.target.files[0];
-            if (!file) return;
-
+        function uploadFile() {
+            let file = document.getElementById('fileInput').files[0];
             let formData = new FormData();
-            formData.append("file", file);
+            formData.append('file', file);
 
-            fetch("/upload", { method: "POST", body: formData })
+            fetch('/upload', { method: 'POST', body: formData })
                 .then(response => response.json())
-                .then(data => alert(data.message))
-                .catch(error => console.error("Error:", error));
+                .then(data => alert(data.message));
         }
 
-        function dropHandler(event) {
-            event.preventDefault();
-            let file = event.dataTransfer.files[0];
-            let formData = new FormData();
-            formData.append("file", file);
-
-            fetch("/upload", { method: "POST", body: formData })
-                .then(response => response.json())
-                .then(data => alert(data.message))
-                .catch(error => console.error("Error:", error));
+        function startProcessing() {
+            fetch('/start_processing', { method: 'POST' }).then(() => {
+                document.getElementById("progress-container").style.display = "block";
+                checkProgress();
+            });
         }
 
-        function dragOverHandler(event) {
-            event.preventDefault();
-        }
-
-        function fetchURLs() {
-            fetch("/view_urls")
+        function checkProgress() {
+            fetch('/progress')
                 .then(response => response.json())
                 .then(data => {
-                    let urlList = document.getElementById("url-list");
-                    urlList.innerHTML = "<h3>Uploaded URLs:</h3><ul>" +
-                        data.urls.map(url => `<li>${url}</li>`).join("") +
-                        "</ul>";
-                })
-                .catch(error => console.error("Error:", error));
-        }
+                    $("#progress-bar").css("width", data.percent + "%").text(data.percent + "%");
 
-        function clearURLs() {
-            fetch("/clear_urls", { method: "POST" })
-                .then(response => response.json())
-                .then(data => {
-                    alert(data.message);
-                    document.getElementById("url-list").innerHTML = "";
-                })
-                .catch(error => console.error("Error:", error));
+                    if (data.status !== "complete") {
+                        setTimeout(checkProgress, 1000);
+                    } else {
+                        $("#downloadBtn").show();
+                    }
+                });
         }
 
         function downloadGeoJSON() {
-            fetch("/download_geojson")
-                .then(response => response.json())
-                .then(data => {
-                    window.location.href = data.file_url;
-                })
-                .catch(error => console.error("Error:", error));
+            window.location.href = "/download_geojson";
         }
     </script>
 </body>
