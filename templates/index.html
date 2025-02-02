@@ -9,101 +9,147 @@
             text-align: center;
             font-family: Arial, sans-serif;
         }
-        #logo {
-            width: 200px; /* Adjust size */
-            margin-bottom: 20px;
+
+        h1 {
+            margin-top: 20px;
         }
-        #fileList {
-            list-style: none;
-            padding: 0;
+
+        #drop-area {
+            border: 2px dashed #ccc;
+            padding: 20px;
+            margin: 20px auto;
+            width: 50%;
+            cursor: pointer;
         }
-        #progressBar {
-            width: 100%;
-            background-color: #ddd;
+
+        #progress-bar {
+            width: 50%;
+            height: 20px;
+            background: #ddd;
+            margin: 20px auto;
             display: none;
         }
-        #progressBar div {
+
+        #progress {
+            height: 100%;
             width: 0%;
-            height: 30px;
-            background-color: #4caf50;
-            text-align: center;
-            line-height: 30px;
+            background: green;
+        }
+
+        #file-list {
+            margin-top: 10px;
+        }
+
+        #start-scraping {
+            display: block;
+            margin: 20px auto;
+            padding: 10px 20px;
+            background-color: blue;
             color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        #download-geojson {
+            display: none;
+            margin-top: 20px;
+            padding: 10px;
+            background: green;
+            color: white;
+            border: none;
         }
     </style>
 </head>
 <body>
 
-    <!-- ✅ Logo at the Center -->
-    <img id="logo" src="{{ url_for('static', filename='logo.png') }}" alt="TourMapper Logo">
-
     <h1>Welcome to TourMapper Pro</h1>
 
-    <!-- ✅ Upload & Process Section -->
-    <input type="file" id="fileInput" multiple>
-    <button onclick="uploadFiles()">Upload URLs</button>
+    <img src="/static/logo.png" alt="App Logo" width="200">
 
-    <h2>Uploaded Files</h2>
-    <button onclick="viewUploadedFiles()">View Uploaded Files</button>
-    <button onclick="clearUploadedFiles()">Clear Files</button>
-
-    <ul id="fileList"></ul>
-
-    <!-- ✅ Progress Bar -->
-    <div id="progressBar">
-        <div id="progressStatus">0%</div>
+    <div id="drop-area">
+        <p>Drag & Drop URL files here or</p>
+        <input type="file" id="file-input" multiple>
     </div>
 
-    <h2>Download</h2>
-    <a id="downloadLink" href="/static/events.geojson" download="events.geojson" style="display: none;">
-        <button>Download GeoJSON</button>
-    </a>
+    <button id="start-scraping">Start Scraping</button>
+
+    <div id="progress-bar">
+        <div id="progress"></div>
+    </div>
+
+    <button id="download-geojson" onclick="downloadGeoJSON()">Download GeoJSON</button>
+
+    <ul id="file-list"></ul>
 
     <script>
-        function uploadFiles() {
-            let files = document.getElementById("fileInput").files;
-            let formData = new FormData();
+        document.getElementById("file-input").addEventListener("change", uploadFiles);
+        document.getElementById("drop-area").addEventListener("dragover", (e) => e.preventDefault());
+        document.getElementById("drop-area").addEventListener("drop", handleDrop);
+        document.getElementById("start-scraping").addEventListener("click", startScraping);
 
-            for (let i = 0; i < files.length; i++) {
-                formData.append("file", files[i]);
+        function uploadFiles(event) {
+            let files = event.target.files;
+            handleUpload(files);
+        }
+
+        function handleDrop(event) {
+            event.preventDefault();
+            let files = event.dataTransfer.files;
+            handleUpload(files);
+        }
+
+        function handleUpload(files) {
+            let formData = new FormData();
+            for (let file of files) {
+                formData.append("file", file);
             }
 
-            fetch('/upload', {
-                method: 'POST',
-                body: formData
-            }).then(response => response.json())
-              .then(data => {
-                  alert(data.message);
-                  viewUploadedFiles();
-              });
-        }
-
-        function viewUploadedFiles() {
-            fetch('/view_uploaded_files')
-                .then(response => response.json())
-                .then(data => {
-                    let fileList = document.getElementById("fileList");
-                    fileList.innerHTML = "";
-
-                    if (data.files.length === 0) {
-                        fileList.innerHTML = "<li>No files uploaded.</li>";
-                    } else {
-                        data.files.forEach(file => {
-                            let li = document.createElement("li");
-                            li.textContent = file;
-                            fileList.appendChild(li);
-                        });
-                    }
-                });
-        }
-
-        function clearUploadedFiles() {
-            fetch('/clear_urls', { method: 'POST' })
+            fetch("/upload", { method: "POST", body: formData })
                 .then(response => response.json())
                 .then(data => {
                     alert(data.message);
-                    viewUploadedFiles();
+                    loadUploadedFiles();
                 });
+        }
+
+        function loadUploadedFiles() {
+            fetch("/view_uploaded_files")
+                .then(response => response.json())
+                .then(data => {
+                    let fileList = document.getElementById("file-list");
+                    fileList.innerHTML = "";
+                    data.files.forEach(file => {
+                        let li = document.createElement("li");
+                        li.textContent = file;
+                        fileList.appendChild(li);
+                    });
+                });
+        }
+
+        function startScraping() {
+            document.getElementById("progress-bar").style.display = "block";
+            let progress = document.getElementById("progress");
+
+            let interval = setInterval(() => {
+                let width = parseInt(progress.style.width) || 0;
+                if (width >= 100) {
+                    clearInterval(interval);
+                } else {
+                    progress.style.width = (width + 10) + "%";
+                }
+            }, 500);
+
+            fetch("/generate_geojson", { method: "POST" })
+                .then(response => response.json())
+                .then(data => {
+                    clearInterval(interval);
+                    progress.style.width = "100%";
+                    document.getElementById("download-geojson").style.display = "block";
+                });
+        }
+
+        function downloadGeoJSON() {
+            window.location.href = "/static/events.geojson";
         }
     </script>
 
