@@ -1,9 +1,9 @@
-
 from flask import Flask, request, jsonify, render_template, send_file
 import os
 import csv
 import json
 import time  # Simulates progress bar updates
+import requests  # To fetch real coordinates
 
 app = Flask(__name__)
 UPLOAD_FOLDER = "uploads"
@@ -11,15 +11,47 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 uploaded_files = []  # Stores uploaded URLs
 
-# Function to simulate scraping (replace with actual scraping logic)
+# Function to get real coordinates from Google Maps API or OpenStreetMap
+def get_coordinates(venue_name):
+    API_URL = f"https://nominatim.openstreetmap.org/search?q={venue_name}&format=json"
+    
+    try:
+        response = requests.get(API_URL)
+        data = response.json()
+        
+        if data:
+            lat = float(data[0]["lat"])
+            lon = float(data[0]["lon"])
+            return [lon, lat]
+        else:
+            return None  # If no result found
+    except Exception as e:
+        print("Error fetching coordinates:", e)
+        return None
+
+# Function to simulate scraping (replace with real scraping logic)
 def scrape_urls(urls):
     scraped_data = []
     for i, url in enumerate(urls):
         time.sleep(1)  # Simulate scraping delay
+
+        # Simulated venue name (Replace with real extraction logic)
+        venue_name = f"Venue {i+1}"
+        address = f"{i+1} Example St, City {i+1}, Country"
+
+        # Get coordinates for venue
+        coordinates = get_coordinates(venue_name)
+        if not coordinates:
+            coordinates = [-74.006, 40.7128]  # Default fallback
+
         scraped_data.append({
             "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [-74.006, 40.7128]},  # Replace with actual coordinates
-            "properties": {"url": url, "venue_name": "Sample Venue", "address": "123 Main St, NY"}
+            "geometry": {"type": "Point", "coordinates": coordinates},
+            "properties": {
+                "url": url,
+                "venue_name": venue_name,
+                "address": address
+            }
         })
     return scraped_data
 
