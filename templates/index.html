@@ -11,6 +11,20 @@
             text-align: center;
             margin: 20px;
         }
+        #drop-zone {
+            width: 80%;
+            margin: auto;
+            padding: 30px;
+            border: 2px dashed #007bff;
+            background-color: #f8f9fa;
+            text-align: center;
+            font-size: 18px;
+            color: #007bff;
+            cursor: pointer;
+        }
+        #drop-zone:hover {
+            background-color: #e9ecef;
+        }
         #map {
             height: 500px;
             width: 80%;
@@ -36,28 +50,49 @@
 <body>
     <h1>Welcome to TourMapper Pro</h1>
 
-    <!-- File Upload Button -->
-    <input type="file" id="fileInput" accept=".txt,.csv" style="margin: 10px;">
-    <button class="button" onclick="uploadUrls()">Upload URLs</button>
+    <!-- Drag-and-Drop Zone -->
+    <div id="drop-zone">Drag & Drop URL File Here or Click to Select</div>
+    <input type="file" id="fileInput" accept=".txt,.csv" style="display: none;">
 
-    <!-- Start Scraping Button -->
+    <!-- Buttons -->
     <button class="button" onclick="startScraping()">Start Scraping</button>
-
-    <!-- Download GeoJSON Button -->
     <a href="/static/events.geojson" download="events.geojson" class="button">Download GeoJSON</a>
 
-    <!-- Map Display (Optional, Can Be Removed) -->
+    <!-- Map Display (Optional) -->
     <div id="map"></div>
 
     <script>
-        function uploadUrls() {
-            let fileInput = document.getElementById("fileInput");
-            if (fileInput.files.length === 0) {
-                alert("Please select a file first.");
-                return;
-            }
+        let dropZone = document.getElementById("drop-zone");
+        let fileInput = document.getElementById("fileInput");
 
-            let file = fileInput.files[0];
+        dropZone.addEventListener("click", function() {
+            fileInput.click();
+        });
+
+        dropZone.addEventListener("dragover", function(event) {
+            event.preventDefault();
+            dropZone.style.backgroundColor = "#e9ecef";
+        });
+
+        dropZone.addEventListener("dragleave", function(event) {
+            dropZone.style.backgroundColor = "#f8f9fa";
+        });
+
+        dropZone.addEventListener("drop", function(event) {
+            event.preventDefault();
+            dropZone.style.backgroundColor = "#f8f9fa";
+
+            let file = event.dataTransfer.files[0];
+            processFile(file);
+        });
+
+        fileInput.addEventListener("change", function(event) {
+            let file = event.target.files[0];
+            processFile(file);
+        });
+
+        function processFile(file) {
+            if (!file) return alert("No file selected.");
             let reader = new FileReader();
             reader.onload = function(event) {
                 let urls = event.target.result.split("\n").map(url => url.trim()).filter(url => url);
