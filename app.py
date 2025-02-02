@@ -1,11 +1,16 @@
 import os
 import json
+import logging
 import requests
 from flask import Flask, render_template, request, jsonify
 
+# ✅ Initialize Flask app
 app = Flask(__name__)
 
-# ✅ Load Google Maps API Key from Environment Variable
+# ✅ Enable Logging
+logging.basicConfig(level=logging.INFO)
+
+# ✅ Load API Key from Heroku Environment Variables
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
 # ✅ Route: Serve `index.html`
@@ -13,7 +18,7 @@ GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 def home():
     return render_template("index.html")
 
-# ✅ Route: Get venue data and generate GeoJSON with polygons
+# ✅ Route: Fetch venue & parking data as GeoJSON
 @app.route("/get_venue_data", methods=["GET"])
 def get_venue_data():
     venue_name = request.args.get("venue")
@@ -21,8 +26,8 @@ def get_venue_data():
         return jsonify({"error": "Missing venue parameter"}), 400
 
     try:
-        # 🎯 Step 1: Get venue details
-        place_url = f"https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
+        # 🎯 Step 1: Fetch venue details
+        place_url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
         params = {
             "input": venue_name,
             "inputtype": "textquery",
@@ -39,11 +44,11 @@ def get_venue_data():
         place_id = place["place_id"]
         location = place["geometry"]["location"]
 
-        # 🎯 Step 2: Get Place Details for boundaries
-        details_url = f"https://maps.googleapis.com/maps/api/place/details/json"
+        # 🎯 Step 2: Fetch venue details
+        details_url = "https://maps.googleapis.com/maps/api/place/details/json"
         details_params = {
             "place_id": place_id,
-            "fields": "geometry,name,formatted_address,photos",
+            "fields": "geometry,name,formatted_address",
             "key": GOOGLE_MAPS_API_KEY
         }
         details_response = requests.get(details_url, params=details_params)
@@ -55,18 +60,18 @@ def get_venue_data():
         venue_info = details_data["result"]
         address = venue_info.get("formatted_address", "Unknown Address")
 
-        # 🎯 Step 3: Get Parking & Property Boundaries
-        parking_url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+        # 🎯 Step 3: Fetch nearby parking locations
+        parking_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
         parking_params = {
             "location": f"{location['lat']},{location['lng']}",
-            "radius": 500,  # Search in a 500m radius
+            "radius": 500,  # 500 meters search radius
             "type": "parking",
             "key": GOOGLE_MAPS_API_KEY
         }
         parking_response = requests.get(parking_url, params=parking_params)
         parking_data = parking_response.json()
 
-        # 🎯 Step 4: Construct GeoJSON
+        # 🎯 Step 4: Create GeoJSON
         geojson_data = {
             "type": "FeatureCollection",
             "features": [
@@ -85,7 +90,7 @@ def get_venue_data():
             ]
         }
 
-        # Add parking locations as polygons
+        # ✅ Add Parking Locations as Polygons
         for parking in parking_data.get("results", []):
             if "geometry" in parking:
                 parking_location = parking["geometry"]["location"]
@@ -107,17 +112,17 @@ def get_venue_data():
                     }
                 })
 
-        # 🎯 Step 5: Save GeoJSON file
+        # 🎯 Step 5: Save GeoJSON to `/static/events.geojson`
         with open("static/events.geojson", "w") as f:
             json.dump(geojson_data, f, indent=4)
 
         return jsonify(geojson_data)
 
     except Exception as e:
+        logging.error(f"Error fetching venue data: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ✅ Run Flask
+# ✅ Run Flask in production
 if __name__ == "__main__":
-    app.run(debug=True)
-
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
 
