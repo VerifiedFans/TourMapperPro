@@ -11,4 +11,4 @@ googlemaps==4.10.0
 keyring==23.13.1
 geopy
 pipfreeze
-webdriver-manager=4.0.1
+webdriver-manager==4.0.1
