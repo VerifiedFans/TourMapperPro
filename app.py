@@ -1,6 +1,8 @@
+
 import os
 import json
 import logging
+import requests
 from flask import Flask, render_template, request, jsonify, send_from_directory
 
 app = Flask(__name__)
@@ -15,6 +17,23 @@ app.config["GEOJSON_FOLDER"] = GEOJSON_FOLDER
 
 # Enable logging
 logging.basicConfig(level=logging.INFO)
+
+# Function to get coordinates using OpenStreetMap Overpass API
+def get_coordinates(venue_name):
+    url = "https://overpass-api.de/api/interpreter"
+    query = f"""
+    [out:json];
+    node["name"="{venue_name}"];
+    out center;
+    """
+    response = requests.get(url, params={"data": query})
+    data = response.json()
+
+    if "elements" in data and len(data["elements"]) > 0:
+        lat = data["elements"][0]["lat"]
+        lon = data["elements"][0]["lon"]
+        return lon, lat  # GeoJSON format (longitude, latitude)
+    return None  # Return None if no location found
 
 @app.route("/")
 def home():
@@ -62,9 +81,17 @@ def start_scraping():
             urls = f.read().splitlines()
 
         for url in urls:
+            venue_name = url.split("/")[-1]  # Extract venue name from URL
+            coordinates = get_coordinates(venue_name)
+
+            if coordinates:
+                lon, lat = coordinates
+            else:
+                lon, lat = 0, 0  # Default if location not found
+
             geojson_data["features"].append({
                 "type": "Feature",
-                "geometry": {"type": "Point", "coordinates": [-74.006, 40.7128]},  # Example coordinates
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
                 "properties": {"url": url, "type": "venue"}
             })
 
