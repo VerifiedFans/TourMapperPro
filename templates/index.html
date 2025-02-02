@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,108 +5,102 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
     <style>
-        body { text-align: center; font-family: Arial, sans-serif; }
-        #drop-area { border: 2px dashed #ccc; padding: 20px; margin: 20px auto; width: 50%; }
-        #progress-bar { width: 50%; height: 20px; background-color: #ddd; margin: 10px auto; display: none; }
-        #progress { height: 100%; width: 0%; background-color: green; }
-        #file-list { text-align: left; margin: 10px auto; width: 50%; }
-        button { margin: 5px; padding: 10px 20px; font-size: 16px; }
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        #drop-area {
+            border: 2px dashed #007BFF;
+            padding: 20px;
+            margin: 20px;
+            cursor: pointer;
+        }
+        #progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f3f3f3;
+            display: none;
+            margin-top: 10px;
+        }
+        #progress {
+            height: 100%;
+            width: 0%;
+            background-color: #007BFF;
+        }
+        #uploaded-files {
+            margin-top: 20px;
+        }
+        button {
+            margin: 10px;
+            padding: 10px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
 
-    <h1>TourMapper Pro</h1>
-    <img src="static/logo.png" alt="Logo" width="200">
+    <img src="/static/logo.png" alt="TourMapper Logo" width="200">
 
-    <!-- Drag & Drop Area -->
+    <h2>Upload Your URLs</h2>
+
     <div id="drop-area">
-        <p>Drag & Drop files here or <input type="file" id="fileInput"></p>
+        <p>Drag & Drop files here or</p>
+        <input type="file" id="file-input" accept=".txt,.csv">
     </div>
 
-    <!-- Progress Bar -->
-    <div id="progress-bar"><div id="progress"></div></div>
-
-    <!-- Buttons -->
     <button onclick="viewFiles()">View Uploaded Files</button>
-    <button onclick="startScraping()">Start Scraping</button>
     <button onclick="clearFiles()">Clear Uploaded Files</button>
-    <a id="download-btn" href="#" style="display: none;" download="events.geojson">Download GeoJSON</a>
+    <button onclick="startScraping()">Start Scraping</button>
+    <button onclick="downloadGeoJSON()">Download GeoJSON</button>
 
-    <!-- Uploaded Files List -->
-    <ul id="file-list"></ul>
+    <div id="progress-bar">
+        <div id="progress"></div>
+    </div>
+
+    <h3>Uploaded Files:</h3>
+    <div id="uploaded-files"></div>
 
     <script>
-        const dropArea = document.getElementById("drop-area");
-        const fileInput = document.getElementById("fileInput");
-        const progressBar = document.getElementById("progress-bar");
-        const progress = document.getElementById("progress");
-        const fileList = document.getElementById("file-list");
-        const downloadBtn = document.getElementById("download-btn");
+        document.getElementById('file-input').addEventListener('change', uploadFile);
 
-        // Drag & Drop Upload
-        dropArea.addEventListener("dragover", (event) => {
-            event.preventDefault();
-            dropArea.style.borderColor = "blue";
-        });
-
-        dropArea.addEventListener("dragleave", () => {
-            dropArea.style.borderColor = "#ccc";
-        });
-
-        dropArea.addEventListener("drop", (event) => {
-            event.preventDefault();
-            dropArea.style.borderColor = "#ccc";
-            uploadFile(event.dataTransfer.files[0]);
-        });
-
-        fileInput.addEventListener("change", () => {
-            uploadFile(fileInput.files[0]);
-        });
-
-        function uploadFile(file) {
-            const formData = new FormData();
+        function uploadFile(event) {
+            let file = event.target.files[0];
+            let formData = new FormData();
             formData.append("file", file);
 
-            fetch("/upload", { method: "POST", body: formData })
-                .then(res => res.json())
-                .then(data => { alert(data.message); viewFiles(); })
-                .catch(err => console.error(err));
+            fetch('/upload', { method: 'POST', body: formData })
+            .then(response => response.json())
+            .then(data => {
+                alert(data.message);
+                viewFiles();
+            });
         }
 
         function viewFiles() {
-            fetch("/view_files")
-                .then(res => res.json())
-                .then(data => {
-                    fileList.innerHTML = "";
-                    data.files.forEach(file => {
-                        const li = document.createElement("li");
-                        li.textContent = file;
-                        fileList.appendChild(li);
-                    });
-                });
-        }
-
-        function startScraping() {
-            progressBar.style.display = "block";
-            progress.style.width = "0%";
-
-            fetch("/start_scraping", { method: "POST" })
-                .then(res => res.json())
-                .then(data => {
-                    progress.style.width = "100%";
-                    alert(data.message);
-                    if (data.geojson_file) {
-                        downloadBtn.href = `/download_geojson`;
-                        downloadBtn.style.display = "inline";
-                    }
-                });
+            fetch('/view_files')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('uploaded-files').innerText = data.uploaded_urls.join("\n");
+            });
         }
 
         function clearFiles() {
-            fetch("/clear_files", { method: "POST" })
-                .then(res => res.json())
-                .then(data => { alert(data.message); viewFiles(); })
-                .catch(err => console.error(err));
+            fetch('/clear_files', { method: 'POST' })
+            .then(() => {
+                document.getElementById('uploaded-files').innerText = '';
+                alert("Files cleared.");
+            });
+        }
+
+        function startScraping() {
+            document.getElementById('progress-bar').style.display = 'block';
+            fetch('/start_scraping', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => alert(data.message));
+        }
+
+        function downloadGeoJSON() {
+            window.location.href = "/download_geojson";
         }
     </script>
 
