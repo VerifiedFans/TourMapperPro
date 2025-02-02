@@ -2,6 +2,8 @@ import os
 import json
 import logging
 import requests
+import threading
+import time
 from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
@@ -14,13 +16,14 @@ if not os.path.exists(UPLOAD_FOLDER):
 
 logging.basicConfig(level=logging.INFO)
 
-# ✅ Serve the main page
+progress = {"status": "idle", "percent": 0}  # ✅ Track Progress
+
+
 @app.route("/")
 def home():
     return render_template("index.html")
 
 
-# ✅ Upload URL file (TXT or CSV)
 @app.route("/upload", methods=["POST"])
 def upload_file():
     if "file" not in request.files:
@@ -36,7 +39,6 @@ def upload_file():
     return jsonify({"message": "File uploaded successfully", "filename": file.filename})
 
 
-# ✅ View Uploaded URLs
 @app.route("/view_urls", methods=["GET"])
 def view_urls():
     files = os.listdir(UPLOAD_FOLDER)
@@ -49,7 +51,6 @@ def view_urls():
     return jsonify({"urls": urls})
 
 
-# ✅ Clear Uploaded URLs
 @app.route("/clear_urls", methods=["POST"])
 def clear_urls():
     for file in os.listdir(UPLOAD_FOLDER):
@@ -57,9 +58,8 @@ def clear_urls():
     return jsonify({"message": "All uploaded URLs have been cleared"})
 
 
-# ✅ Helper function: Get venue coordinates
 def get_venue_location(venue_name):
-    """Fetches latitude and longitude of a venue using OpenStreetMap Overpass API."""
+    """Fetch latitude & longitude using OpenStreetMap."""
     url = f"https://nominatim.openstreetmap.org/search?q={venue_name}&format=json"
     response = requests.get(url).json()
 
@@ -70,16 +70,14 @@ def get_venue_location(venue_name):
     return None, None
 
 
-# ✅ Helper function: Get parking lot polygons
 def get_parking_lots(lat, lon):
-    """Fetches parking lot polygons near a location using Overpass API."""
+    """Fetch parking lots within 500m using Overpass API."""
     overpass_url = "http://overpass-api.de/api/interpreter"
     query = f"""
     [out:json];
     (
       node["amenity"="parking"](around:500,{lat},{lon});
       way["amenity"="parking"](around:500,{lat},{lon});
-      relation["amenity"="parking"](around:500,{lat},{lon});
     );
     out body;
     >;
@@ -101,41 +99,73 @@ def get_parking_lots(lat, lon):
     return features
 
 
-# ✅ Generate and Download GeoJSON
-@app.route("/download_geojson", methods=["GET"])
-def download_geojson():
-    geojson_data = {"type": "FeatureCollection", "features": []}
+def generate_geojson():
+    """Process venues and create a GeoJSON file (with progress tracking)."""
+    global progress
+    progress["status"] = "processing"
+    progress["percent"] = 0
 
-    # ✅ Read uploaded URLs and extract venues
+    geojson_data = {"type": "FeatureCollection", "features": []}
     files = os.listdir(UPLOAD_FOLDER)
     venues = []
+
     for file in files:
         file_path = os.path.join(UPLOAD_FOLDER, file)
         with open(file_path, "r") as f:
             venues.extend(f.read().splitlines())
 
-    # ✅ Process each venue
-    for venue in venues:
+    total_venues = len(venues)
+    if total_venues == 0:
+        progress["status"] = "idle"
+        return
+
+    # ✅ Process each venue with progress updates
+    for i, venue in enumerate(venues):
         lat, lon = get_venue_location(venue)
         if lat is None or lon is None:
-            continue  # Skip if no location found
+            continue
 
-        # ✅ Add venue to GeoJSON
         geojson_data["features"].append({
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": [lon, lat]},
             "properties": {"type": "venue", "name": venue}
         })
 
-        # ✅ Fetch and add parking lots
         parking_lots = get_parking_lots(lat, lon)
         geojson_data["features"].extend(parking_lots)
 
-    # ✅ Save GeoJSON file
+        # ✅ Update Progress
+        progress["percent"] = int(((i + 1) / total_venues) * 100)
+
+        time.sleep(0.5)  # Simulating processing time
+
+    # ✅ Save GeoJSON File
     with open(GEOJSON_FILE, "w") as f:
         json.dump(geojson_data, f, indent=4)
 
-    return jsonify({"message": "GeoJSON file generated", "file_url": GEOJSON_FILE})
+    progress["status"] = "complete"
+
+
+@app.route("/start_processing", methods=["POST"])
+def start_processing():
+    """Start the GeoJSON creation process in a background thread."""
+    threading.Thread(target=generate_geojson).start()
+    return jsonify({"message": "Processing started"})
+
+
+@app.route("/progress", methods=["GET"])
+def get_progress():
+    """Returns the current processing status and progress %."""
+    return jsonify(progress)
+
+
+@app.route("/download_geojson", methods=["GET"])
+def download_geojson():
+    """Return the GeoJSON file URL when processing is done."""
+    if progress["status"] == "complete":
+        return jsonify({"message": "GeoJSON file is ready", "file_url": GEOJSON_FILE})
+    else:
+        return jsonify({"message": "GeoJSON not ready yet"}), 400
 
 
 if __name__ == "__main__":
