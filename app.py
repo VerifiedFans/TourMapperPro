@@ -1,4 +1,3 @@
-
 import os
 import json
 import logging
@@ -7,18 +6,16 @@ from flask import Flask, render_template, request, jsonify, send_from_directory
 
 app = Flask(__name__)
 
-# Configuration
 UPLOAD_FOLDER = "uploads"
 GEOJSON_FOLDER = "static"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)  # Ensure folders exist
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(GEOJSON_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["GEOJSON_FOLDER"] = GEOJSON_FOLDER
 
-# Enable logging
 logging.basicConfig(level=logging.INFO)
 
-# Function to get coordinates using OpenStreetMap Overpass API
+# OpenStreetMap Overpass API for venue location
 def get_coordinates(venue_name):
     url = "https://overpass-api.de/api/interpreter"
     query = f"""
@@ -32,8 +29,8 @@ def get_coordinates(venue_name):
     if "elements" in data and len(data["elements"]) > 0:
         lat = data["elements"][0]["lat"]
         lon = data["elements"][0]["lon"]
-        return lon, lat  # GeoJSON format (longitude, latitude)
-    return None  # Return None if no location found
+        return lon, lat
+    return None
 
 @app.route("/")
 def home():
@@ -81,18 +78,18 @@ def start_scraping():
             urls = f.read().splitlines()
 
         for url in urls:
-            venue_name = url.split("/")[-1]  # Extract venue name from URL
+            venue_name = url.split("/")[-1]  
             coordinates = get_coordinates(venue_name)
 
             if coordinates:
                 lon, lat = coordinates
             else:
-                lon, lat = 0, 0  # Default if location not found
+                lon, lat = 0, 0 
 
             geojson_data["features"].append({
                 "type": "Feature",
                 "geometry": {"type": "Point", "coordinates": [lon, lat]},
-                "properties": {"url": url, "type": "venue"}
+                "properties": {"url": url, "venue": venue_name, "type": "venue"}
             })
 
     geojson_path = os.path.join(app.config["GEOJSON_FOLDER"], "events.geojson")
