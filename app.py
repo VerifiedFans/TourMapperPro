@@ -5,14 +5,13 @@ from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-# Load Google Maps API Key from environment variables
+# Load Google Maps API Key
 GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
-
 if not GOOGLE_MAPS_API_KEY:
     raise ValueError("Google Maps API Key is missing! Set it using Heroku config.")
 
 def get_place_details(place_name):
-    """Fetches place details including place_id from Google Places API."""
+    """Fetch venue details using Google Places API."""
     url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
     params = {
         "input": place_name,
@@ -24,7 +23,7 @@ def get_place_details(place_name):
     return response.json()
 
 def get_place_polygon(place_id):
-    """Fetches detailed venue geometry (building footprint) from Google Places API."""
+    """Fetch venue polygon (building footprint) from Google Places API."""
     url = "https://maps.googleapis.com/maps/api/place/details/json"
     params = {
         "place_id": place_id,
@@ -35,11 +34,11 @@ def get_place_polygon(place_id):
     return response.json()
 
 def get_parking_nearby(lat, lng, radius=500):
-    """Finds nearby parking areas using Google Places API."""
+    """Find nearby parking locations."""
     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
     params = {
         "location": f"{lat},{lng}",
-        "radius": radius,  # Search radius in meters
+        "radius": radius,
         "type": "parking",
         "key": GOOGLE_MAPS_API_KEY
     }
@@ -48,7 +47,7 @@ def get_parking_nearby(lat, lng, radius=500):
 
 @app.route("/venue/<venue_name>", methods=["GET"])
 def venue_info(venue_name):
-    """Returns venue details including polygons for mapping."""
+    """Returns venue details and parking locations."""
     place_data = get_place_details(venue_name)
     
     if not place_data.get("candidates"):
