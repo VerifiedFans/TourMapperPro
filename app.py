@@ -1,3 +1,4 @@
+
 from flask import Flask, request, jsonify, render_template, send_file
 import os
 import csv
@@ -52,6 +53,14 @@ def upload_file():
 
     uploaded_files.extend(urls)
     return jsonify({"message": "File uploaded", "urls": urls})
+
+@app.route("/paste_urls", methods=["POST"])
+def paste_urls():
+    global uploaded_files
+    data = request.get_json()
+    urls = data.get("urls", [])
+    uploaded_files.extend(urls)
+    return jsonify({"message": "Pasted URLs added!"})
 
 @app.route("/uploaded_urls", methods=["GET"])
 def get_uploaded_urls():
