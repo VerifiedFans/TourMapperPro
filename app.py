@@ -1,119 +1,122 @@
 import os
 import json
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
 
-# Load Google Maps API Key
-GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
-if not GOOGLE_MAPS_API_KEY:
-    raise ValueError("Google Maps API Key is missing! Set it using Heroku config.")
+# ✅ Load Google Maps API Key from Environment Variable
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
-def get_place_details(place_name):
-    """Fetch venue details using Google Places API."""
-    url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
-    params = {
-        "input": place_name,
-        "inputtype": "textquery",
-        "fields": "geometry,formatted_address,name,place_id",
-        "key": GOOGLE_MAPS_API_KEY
-    }
-    response = requests.get(url, params=params)
-    return response.json()
+# ✅ Route: Serve `index.html`
+@app.route("/")
+def home():
+    return render_template("index.html")
 
-def get_place_polygon(place_id):
-    """Fetch venue polygon (building footprint) from Google Places API."""
-    url = "https://maps.googleapis.com/maps/api/place/details/json"
-    params = {
-        "place_id": place_id,
-        "fields": "geometry",
-        "key": GOOGLE_MAPS_API_KEY
-    }
-    response = requests.get(url, params=params)
-    return response.json()
+# ✅ Route: Get venue data and generate GeoJSON with polygons
+@app.route("/get_venue_data", methods=["GET"])
+def get_venue_data():
+    venue_name = request.args.get("venue")
+    if not venue_name:
+        return jsonify({"error": "Missing venue parameter"}), 400
 
-def get_parking_nearby(lat, lng, radius=500):
-    """Find nearby parking locations."""
-    url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
-    params = {
-        "location": f"{lat},{lng}",
-        "radius": radius,
-        "type": "parking",
-        "key": GOOGLE_MAPS_API_KEY
-    }
-    response = requests.get(url, params=params)
-    return response.json()
+    try:
+        # 🎯 Step 1: Get venue details
+        place_url = f"https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
+        params = {
+            "input": venue_name,
+            "inputtype": "textquery",
+            "fields": "geometry,place_id,name",
+            "key": GOOGLE_MAPS_API_KEY
+        }
+        place_response = requests.get(place_url, params=params)
+        place_data = place_response.json()
 
-@app.route("/venue/<venue_name>", methods=["GET"])
-def venue_info(venue_name):
-    """Returns venue details and parking locations."""
-    place_data = get_place_details(venue_name)
-    
-    if not place_data.get("candidates"):
-        return jsonify({"error": "Venue not found"}), 404
+        if not place_data.get("candidates"):
+            return jsonify({"error": "Venue not found"}), 404
 
-    place = place_data["candidates"][0]
-    place_id = place["place_id"]
-    venue_geometry = get_place_polygon(place_id)
+        place = place_data["candidates"][0]
+        place_id = place["place_id"]
+        location = place["geometry"]["location"]
 
-    if "geometry" not in venue_geometry.get("result", {}):
-        return jsonify({"error": "Geometry not available"}), 404
+        # 🎯 Step 2: Get Place Details for boundaries
+        details_url = f"https://maps.googleapis.com/maps/api/place/details/json"
+        details_params = {
+            "place_id": place_id,
+            "fields": "geometry,name,formatted_address,photos",
+            "key": GOOGLE_MAPS_API_KEY
+        }
+        details_response = requests.get(details_url, params=details_params)
+        details_data = details_response.json()
 
-    venue_location = venue_geometry["result"]["geometry"]["location"]
-    lat, lng = venue_location["lat"], venue_location["lng"]
+        if not details_data.get("result"):
+            return jsonify({"error": "Could not fetch venue details"}), 500
 
-    # Get nearby parking areas
-    parking_data = get_parking_nearby(lat, lng)
-    parking_features = []
+        venue_info = details_data["result"]
+        address = venue_info.get("formatted_address", "Unknown Address")
 
-    if "results" in parking_data:
-        for park in parking_data["results"]:
-            park_geometry = park.get("geometry", {}).get("location", {})
-            if park_geometry:
-                parking_features.append({
+        # 🎯 Step 3: Get Parking & Property Boundaries
+        parking_url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+        parking_params = {
+            "location": f"{location['lat']},{location['lng']}",
+            "radius": 500,  # Search in a 500m radius
+            "type": "parking",
+            "key": GOOGLE_MAPS_API_KEY
+        }
+        parking_response = requests.get(parking_url, params=parking_params)
+        parking_data = parking_response.json()
+
+        # 🎯 Step 4: Construct GeoJSON
+        geojson_data = {
+            "type": "FeatureCollection",
+            "features": [
+                {
                     "type": "Feature",
                     "geometry": {
                         "type": "Point",
-                        "coordinates": [park_geometry["lng"], park_geometry["lat"]]
+                        "coordinates": [location["lng"], location["lat"]]
                     },
                     "properties": {
-                        "name": park.get("name", "Unknown Parking"),
-                        "address": park.get("vicinity", "Unknown Address"),
-                        "rating": park.get("rating", "N/A")
+                        "name": venue_info["name"],
+                        "address": address,
+                        "type": "venue"
+                    }
+                }
+            ]
+        }
+
+        # Add parking locations as polygons
+        for parking in parking_data.get("results", []):
+            if "geometry" in parking:
+                parking_location = parking["geometry"]["location"]
+                geojson_data["features"].append({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [parking_location["lng"] - 0.0005, parking_location["lat"] - 0.0005],
+                            [parking_location["lng"] + 0.0005, parking_location["lat"] - 0.0005],
+                            [parking_location["lng"] + 0.0005, parking_location["lat"] + 0.0005],
+                            [parking_location["lng"] - 0.0005, parking_location["lat"] + 0.0005],
+                            [parking_location["lng"] - 0.0005, parking_location["lat"] - 0.0005]
+                        ]]
+                    },
+                    "properties": {
+                        "name": parking["name"],
+                        "type": "parking"
                     }
                 })
 
-    # Create GeoJSON response
-    geojson_response = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [lng, lat]
-                },
-                "properties": {
-                    "name": place["name"],
-                    "address": place["formatted_address"]
-                }
-            }
-        ] + parking_features
-    }
+        # 🎯 Step 5: Save GeoJSON file
+        with open("static/events.geojson", "w") as f:
+            json.dump(geojson_data, f, indent=4)
 
-    # Save GeoJSON to file
-    geojson_path = os.path.join("static", "events.geojson")
-    os.makedirs("static", exist_ok=True)  # Ensure static directory exists
-    with open(geojson_path, "w") as geojson_file:
-        json.dump(geojson_response, geojson_file, indent=4)
+        return jsonify(geojson_data)
 
-    return jsonify({"message": "Venue and parking data saved", "geojson": geojson_response})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-@app.route("/")
-def home():
-    return jsonify({"message": "Welcome to TourMapper API!"})
-
+# ✅ Run Flask
 if __name__ == "__main__":
     app.run(debug=True)
 
