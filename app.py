@@ -1,107 +1,78 @@
 import os
 import json
-import requests
-from flask import Flask, render_template, request, jsonify, send_file
-from werkzeug.utils import secure_filename
+import logging
+from flask import Flask, render_template, request, jsonify
 
-# ✅ Initialize Flask app
 app = Flask(__name__)
 
-# ✅ API Keys (Replace with actual API keys)
-GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"
+# ✅ Enable logging
+logging.basicConfig(level=logging.INFO)
 
-# ✅ Upload Folder
 UPLOAD_FOLDER = "uploads"
+GEOJSON_FILE = "static/events.geojson"
+
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
-# ✅ Route: Serve `index.html`
+# ✅ Serve the main page
 @app.route("/")
 def home():
     return render_template("index.html")
 
-# ✅ Function: Get Latitude & Longitude from Venue Name
-def get_lat_lon(venue_url):
-    """ Fetch venue location using Google Maps API """
-    try:
-        venue_name = venue_url.split("/")[-1]  # Extract last part of the URL
-        response = requests.get(
-            "https://maps.googleapis.com/maps/api/place/findplacefromtext/json",
-            params={
-                "input": venue_name,
-                "inputtype": "textquery",
-                "fields": "geometry",
-                "key": GOOGLE_MAPS_API_KEY
-            }
-        )
-        data = response.json()
-        if "candidates" in data and len(data["candidates"]) > 0:
-            location = data["candidates"][0]["geometry"]["location"]
-            return location["lat"], location["lng"]
-    except Exception as e:
-        print(f"Error fetching location for {venue_url}: {e}")
-    return None, None  # Default to None if failed
+# ✅ Upload URL file (TXT or CSV)
+@app.route("/upload", methods=["POST"])
+def upload_file():
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
 
-# ✅ Function: Get Venue Footprints & Parking Lot Polygons
-def get_venue_polygons(lat, lon):
-    """ Fetch venue footprints & parking lots from OpenStreetMap Overpass API """
-    overpass_url = "http://overpass-api.de/api/interpreter"
-    overpass_query = f"""
-        [out:json];
-        (
-            way(around:500, {lat}, {lon})["building"];
-            way(around:500, {lat}, {lon})["amenity"="parking"];
-        );
-        out geom;
-    """
-    try:
-        response = requests.get(overpass_url, params={"data": overpass_query})
-        data = response.json()
-        polygons = []
-        for element in data.get("elements", []):
-            if "geometry" in element:
-                polygon_coords = [[node["lon"], node["lat"]] for node in element["geometry"]]
-                polygon_coords.append(polygon_coords[0])  # Close the polygon
-                polygons.append({
-                    "type": "Feature",
-                    "geometry": {"type": "Polygon", "coordinates": [polygon_coords]},
-                    "properties": {"type": "parking" if "amenity" in element.get("tags", {}) else "venue"}
-                })
-        return polygons
-    except Exception as e:
-        print(f"Error fetching polygons: {e}")
-    return []
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
 
-# ✅ Route: Upload URLs & Process GeoJSON
-@app.route("/upload_urls", methods=["POST"])
-def upload_urls():
-    try:
-        data = request.json
-        urls = data.get("urls", [])
-        geojson_data = {"type": "FeatureCollection", "features": []}
+    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+    file.save(file_path)
 
-        for url in urls:
-            lat, lon = get_lat_lon(url)
-            if lat and lon:
-                geojson_data["features"].extend(get_venue_polygons(lat, lon))
+    return jsonify({"message": "File uploaded successfully", "filename": file.filename})
 
-        # Save to file
-        geojson_path = os.path.join(app.config["UPLOAD_FOLDER"], "venues.geojson")
-        with open(geojson_path, "w") as f:
-            json.dump(geojson_data, f, indent=4)
+# ✅ View Uploaded URLs
+@app.route("/view_urls", methods=["GET"])
+def view_urls():
+    files = os.listdir(UPLOAD_FOLDER)
+    urls = []
+    for file in files:
+        file_path = os.path.join(UPLOAD_FOLDER, file)
+        with open(file_path, "r") as f:
+            urls.extend(f.read().splitlines())
 
-        return jsonify({"message": "GeoJSON file created successfully!", "download": "/download_geojson"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"urls": urls})
 
-# ✅ Route: Download GeoJSON File
+# ✅ Clear Uploaded URLs
+@app.route("/clear_urls", methods=["POST"])
+def clear_urls():
+    for file in os.listdir(UPLOAD_FOLDER):
+        os.remove(os.path.join(UPLOAD_FOLDER, file))
+    return jsonify({"message": "All uploaded URLs have been cleared"})
+
+# ✅ Generate and Download GeoJSON
 @app.route("/download_geojson", methods=["GET"])
 def download_geojson():
-    geojson_path = os.path.join(app.config["UPLOAD_FOLDER"], "venues.geojson")
-    return send_file(geojson_path, as_attachment=True)
+    geojson_data = {
+        "type": "FeatureCollection",
+        "features": []
+    }
 
-# ✅ Run Flask App
+    # Example: Adding dummy venue location
+    geojson_data["features"].append({
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [-74.006, 40.7128]},
+        "properties": {"type": "venue", "name": "Sample Venue"}
+    })
+
+    with open(GEOJSON_FILE, "w") as f:
+        json.dump(geojson_data, f, indent=4)
+
+    return jsonify({"message": "GeoJSON file generated", "file_url": GEOJSON_FILE})
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+    app.run(debug=True)
 
