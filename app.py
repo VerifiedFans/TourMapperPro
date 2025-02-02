@@ -17,16 +17,23 @@ EMAIL_PASS = os.getenv("EMAIL_PASS")  # Your email app password
 # ✅ Initialize Flask App
 app = Flask(__name__)
 
-# ✅ Initialize Selenium WebDriver
-options = webdriver.ChromeOptions()
-options.add_argument("--headless")
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+# ✅ Selenium Setup
+chrome_options = webdriver.ChromeOptions()
+chrome_options.add_argument("--headless")
+chrome_options.add_argument("--disable-gpu")
+chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-dev-shm-usage")
+
+driver = webdriver.Chrome(
+    service=Service(ChromeDriverManager().install()),
+    options=chrome_options
+)
 
 # ✅ Function: Scrape Event Data
 def scrape_event_data(url):
     """Scrapes event date, venue name, and address from a URL."""
     driver.get(url)
-    time.sleep(2)  # Wait for page to load
+    time.sleep(2)
     soup = BeautifulSoup(driver.page_source, "html.parser")
 
     event_date = soup.find("span", class_="event-date").text.strip() if soup.find("span", class_="event-date") else "Unknown Date"
@@ -54,8 +61,8 @@ def get_osm_polygons(lat, lon):
     query = f"""
     [out:json];
     (
-      way(around:50,{lat},{lon})["building"];  /* Get Venue */
-      way(around:100,{lat},{lon})["amenity"="parking"];  /* Get Parking */
+      way(around:50,{lat},{lon})["building"];
+      way(around:100,{lat},{lon})["amenity"="parking"];
     );
     out geom;
     """
@@ -75,7 +82,7 @@ def get_osm_polygons(lat, lon):
 
     return polygons
 
-# ✅ Function: Generate Single GeoJSON for Venue & Parking
+# ✅ Function: Generate Single GeoJSON
 def generate_geojson(events):
     """Creates a single GeoJSON file for venues & parking lots."""
     geojson_data = {"type": "FeatureCollection", "features": []}
