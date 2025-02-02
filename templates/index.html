@@ -5,159 +5,104 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
     <style>
-        body {
-            text-align: center;
-            font-family: Arial, sans-serif;
-        }
-
-        h1 {
-            margin-top: 20px;
-        }
-
+        body { text-align: center; font-family: Arial, sans-serif; }
         #drop-area {
-            border: 2px dashed #ccc;
-            padding: 20px;
-            margin: 20px auto;
-            width: 50%;
-            cursor: pointer;
+            border: 2px dashed #ccc; padding: 20px; width: 50%;
+            margin: 20px auto; background-color: #f9f9f9;
         }
-
-        #progress-container {
-            width: 50%;
-            margin: 20px auto;
-            display: none;
-        }
-
-        #progress-bar {
-            width: 100%;
-            height: 20px;
-            background: #ddd;
-        }
-
-        #progress {
-            height: 100%;
-            width: 0%;
-            background: green;
-        }
-
-        #file-list {
-            margin-top: 10px;
-            text-align: left;
-            display: inline-block;
-        }
-
-        .button {
-            display: block;
-            margin: 10px auto;
-            padding: 10px 20px;
-            border: none;
-            cursor: pointer;
-            font-size: 16px;
-        }
-
-        .upload-btn { background-color: blue; color: white; }
-        .view-btn { background-color: gray; color: white; }
-        .scrape-btn { background-color: green; color: white; }
-        .clear-btn { background-color: red; color: white; }
-        .download-btn { background-color: purple; color: white; display: none; }
+        #progress-bar { width: 0%; height: 20px; background: green; }
     </style>
 </head>
 <body>
 
     <h1>Welcome to TourMapper Pro</h1>
-    <img src="/static/logo.png" alt="App Logo" width="200">
+    <img src="/static/logo.png" alt="Logo" width="150">  
 
     <div id="drop-area">
-        <p>Drag & Drop URL files here or</p>
-        <input type="file" id="file-input" multiple>
+        <p>Drag & Drop files here or click to upload</p>
+        <input type="file" id="fileInput" multiple>
     </div>
 
-    <button class="button upload-btn" onclick="uploadFiles()">Upload Files</button>
-    <button class="button view-btn" onclick="loadUploadedFiles()">View Uploaded Files</button>
-    <button class="button scrape-btn" onclick="startScraping()">Start Scraping</button>
-    <button class="button clear-btn" onclick="clearUploadedFiles()">Clear Uploaded Files</button>
+    <button onclick="viewUploadedFiles()">View Uploaded Files</button>
+    <button onclick="startScraping()">Start Scraping</button>
+    <button onclick="clearUploadedFiles()">Clear Uploaded Files</button>
+    
+    <div id="uploaded-files"></div>
 
     <div id="progress-container">
-        <p>Processing...</p>
-        <div id="progress-bar"><div id="progress"></div></div>
+        <div id="progress-bar"></div>
     </div>
 
-    <button class="button download-btn" id="download-geojson" onclick="downloadGeoJSON()">Download GeoJSON</button>
-
-    <ul id="file-list"></ul>
+    <a id="download-link" style="display:none;" href="/download_geojson" download="events.geojson">
+        <button>Download GeoJSON</button>
+    </a>
 
     <script>
-        document.getElementById("file-input").addEventListener("change", uploadFiles);
-        document.getElementById("drop-area").addEventListener("dragover", (e) => e.preventDefault());
-        document.getElementById("drop-area").addEventListener("drop", handleDrop);
-
-        function uploadFiles(event) {
-            let files = event.target.files || event.dataTransfer.files;
-            let formData = new FormData();
-            for (let file of files) {
-                formData.append("file", file);
-            }
-
-            fetch("/upload", { method: "POST", body: formData })
-                .then(response => response.json())
-                .then(data => {
-                    alert(data.message);
-                    loadUploadedFiles();
-                });
-        }
-
-        function handleDrop(event) {
+        document.getElementById("drop-area").addEventListener("drop", function(event) {
             event.preventDefault();
-            uploadFiles(event);
+            let files = event.dataTransfer.files;
+            uploadFiles(files);
+        });
+
+        document.getElementById("drop-area").addEventListener("dragover", function(event) {
+            event.preventDefault();
+        });
+
+        document.getElementById("fileInput").addEventListener("change", function(event) {
+            uploadFiles(event.target.files);
+        });
+
+        function uploadFiles(files) {
+            for (let file of files) {
+                let formData = new FormData();
+                formData.append("file", file);
+
+                fetch("/upload", { method: "POST", body: formData })
+                    .then(response => response.json())
+                    .then(data => alert(data.message))
+                    .catch(error => console.error("Upload error:", error));
+            }
         }
 
-        function loadUploadedFiles() {
-            fetch("/view_uploaded_files")
+        function viewUploadedFiles() {
+            fetch("/view_files")
                 .then(response => response.json())
                 .then(data => {
-                    let fileList = document.getElementById("file-list");
-                    fileList.innerHTML = "";
+                    let fileList = document.getElementById("uploaded-files");
+                    fileList.innerHTML = "<h3>Uploaded Files:</h3>";
                     data.files.forEach(file => {
-                        let li = document.createElement("li");
-                        li.textContent = file;
-                        fileList.appendChild(li);
+                        fileList.innerHTML += `<p>${file}</p>`;
                     });
-                });
+                })
+                .catch(error => console.error("Error fetching files:", error));
         }
 
         function startScraping() {
-            document.getElementById("progress-container").style.display = "block";
-            let progress = document.getElementById("progress");
-
+            document.getElementById("progress-bar").style.width = "0%";
+            let progress = 0;
             let interval = setInterval(() => {
-                let width = parseInt(progress.style.width) || 0;
-                if (width >= 100) {
-                    clearInterval(interval);
-                } else {
-                    progress.style.width = (width + 10) + "%";
-                }
+                progress += 10;
+                document.getElementById("progress-bar").style.width = progress + "%";
+                if (progress >= 100) clearInterval(interval);
             }, 500);
 
-            fetch("/generate_geojson", { method: "POST" })
-                .then(response => response.json())
-                .then(data => {
-                    clearInterval(interval);
-                    progress.style.width = "100%";
-                    document.getElementById("download-geojson").style.display = "block";
-                });
-        }
-
-        function clearUploadedFiles() {
-            fetch("/clear_uploaded_files", { method: "POST" })
+            fetch("/start_scraping", { method: "POST" })
                 .then(response => response.json())
                 .then(data => {
                     alert(data.message);
-                    document.getElementById("file-list").innerHTML = "";
-                });
+                    document.getElementById("download-link").style.display = "block";
+                })
+                .catch(error => console.error("Error starting scraping:", error));
         }
 
-        function downloadGeoJSON() {
-            window.location.href = "/static/events.geojson";
+        function clearUploadedFiles() {
+            fetch("/clear_files", { method: "POST" })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message);
+                    document.getElementById("uploaded-files").innerHTML = "";
+                })
+                .catch(error => console.error("Error clearing files:", error));
         }
     </script>
 
