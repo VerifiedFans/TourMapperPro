@@ -3,22 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TourMapper Pro</title>
-    <script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=geometry,places"></script>
+    <title>TourMapper Pro - Event Scraper</title>
     <script>
-        function initMap() {
-            var map = new google.maps.Map(document.getElementById("map"), {
-                center: { lat: 40.7128, lng: -74.0060 },
-                zoom: 12,
-            });
-
-            // Load and display GeoJSON data
-            fetch("/static/events.geojson")
-                .then(response => response.json())
-                .then(data => map.data.addGeoJson(data))
-                .catch(error => console.error("Error loading GeoJSON:", error));
-        }
-
         function scrapeEvents() {
             let urls = document.getElementById("eventUrls").value.split("\n").map(url => url.trim()).filter(url => url);
             if (urls.length === 0) {
@@ -36,7 +22,7 @@
                 if (data.file) {
                     document.getElementById("downloadLink").href = data.file;
                     document.getElementById("downloadLink").style.display = "block";
-                    alert("GeoJSON file created successfully!");
+                    alert("GeoJSON created! Click the download link.");
                 } else {
                     alert("Error: " + data.error);
                 }
@@ -45,17 +31,15 @@
         }
     </script>
 </head>
-<body onload="initMap()">
-    <h1>Welcome to TourMapper Pro</h1>
+<body>
+    <h1>Event Scraper</h1>
+    <p>Enter event URLs, one per line:</p>
 
-    <textarea id="eventUrls" placeholder="Enter event URLs, one per line" rows="5" cols="50"></textarea>
+    <textarea id="eventUrls" placeholder="Enter event URLs here..." rows="5" cols="50"></textarea>
     <br>
-    <button onclick="scrapeEvents()">Generate GeoJSON</button>
+    <button onclick="scrapeEvents()">Scrape & Generate GeoJSON</button>
     
     <br><br>
     <a id="downloadLink" href="#" style="display:none;" download="events.geojson">Download GeoJSON</a>
-
-    <div id="map" style="width: 100%; height: 500px; margin-top: 20px;"></div>
 </body>
 </html>
-
