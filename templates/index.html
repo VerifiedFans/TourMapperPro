@@ -4,94 +4,63 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
+    <script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=geometry,places"></script>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <style>
-        body { text-align: center; font-family: Arial, sans-serif; }
-        #drop-area { border: 2px dashed #ccc; padding: 20px; margin: 20px auto; width: 50%; }
-        #progress-bar { width: 50%; height: 20px; background: #ddd; margin: 10px auto; display: none; }
-        #progress { height: 100%; background: green; width: 0%; }
-        textarea { width: 80%; height: 150px; }
+        #map { height: 500px; width: 100%; }
     </style>
 </head>
 <body>
-
-    <h1>TourMapper Pro</h1>
-
-    <!-- File Upload & Copy-Paste -->
-    <input type="file" id="file-upload">
-    <textarea id="pasted-urls" placeholder="Paste URLs here (one per line)"></textarea>
-    <button onclick="uploadUrls()">Upload URLs</button>
-
-    <!-- View & Clear Uploaded Files -->
-    <button onclick="viewUploadedFiles()">View Uploaded Files</button>
-    <button onclick="clearUploadedFiles()">Clear Files</button>
-
-    <!-- Start Scraping -->
-    <button onclick="startScraping()">Start Scraping</button>
-
-    <!-- Progress Bar -->
-    <div id="progress-bar"><div id="progress"></div></div>
-
-    <!-- Download Button -->
-    <button onclick="downloadGeoJSON()">Download GeoJSON</button>
-
-    <!-- Drag & Drop Upload -->
-    <div id="drop-area">Drag & Drop Files Here</div>
+    <h1>Welcome to TourMapper Pro</h1>
+    <input type="text" id="venueName" placeholder="Enter Venue Name">
+    <button onclick="fetchVenueData()">Find Venue</button>
+    <div id="map"></div>
 
     <script>
-        function uploadUrls() {
-            let fileInput = document.getElementById("file-upload");
-            let pastedUrls = document.getElementById("pasted-urls").value;
-            let formData = new FormData();
+        let map = L.map('map').setView([40.7128, -74.0060], 13);
 
-            if (fileInput.files.length > 0) {
-                formData.append("file", fileInput.files[0]);
-            } else if (pastedUrls.trim() !== "") {
-                formData.append("pasted_urls", pastedUrls);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        function fetchVenueData() {
+            let venue = document.getElementById("venueName").value;
+            if (!venue) {
+                alert("Please enter a venue name.");
+                return;
             }
 
-            fetch("/upload", { method: "POST", body: formData })
-                .then(res => res.json())
-                .then(data => alert("Uploaded successfully!"))
-                .catch(err => alert("Upload failed."));
-        }
+            fetch(`/api/get_venue_data?venue=${venue}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
 
-        function viewUploadedFiles() {
-            fetch("/view_files")
-                .then(res => res.json())
-                .then(data => alert("Uploaded URLs:\n" + data.uploaded_urls.join("\n")))
-                .catch(err => alert("Failed to retrieve files."));
-        }
+                let { lat, lng, bounds } = data;
 
-        function clearUploadedFiles() {
-            fetch("/clear_files", { method: "POST" })
-                .then(res => res.json())
-                .then(data => alert(data.message))
-                .catch(err => alert("Clear failed."));
-        }
+                // Clear map
+                map.eachLayer(layer => { if (!!layer.toGeoJSON) map.removeLayer(layer); });
 
-        function startScraping() {
-            document.getElementById("progress-bar").style.display = "block";
-            document.getElementById("progress").style.width = "0%";
+                // Add Marker
+                L.marker([lat, lng]).addTo(map).bindPopup(data.venue).openPopup();
 
-            fetch("/start_scraping", { method: "POST" })
-                .then(res => res.json())
-                .then(data => {
-                    let progress = document.getElementById("progress");
-                    let interval = setInterval(() => {
-                        fetch("/progress")
-                            .then(res => res.json())
-                            .then(data => {
-                                progress.style.width = data.progress + "%";
-                                if (data.progress >= 100) clearInterval(interval);
-                            });
-                    }, 1000);
-                });
-        }
+                // Add Polygon (Venue Footprint)
+                let polygonCoords = [
+                    [bounds.southwest.lat, bounds.southwest.lng],
+                    [bounds.northeast.lat, bounds.southwest.lng],
+                    [bounds.northeast.lat, bounds.northeast.lng],
+                    [bounds.southwest.lat, bounds.northeast.lng],
+                    [bounds.southwest.lat, bounds.southwest.lng]
+                ];
 
-        function downloadGeoJSON() {
-            window.location.href = "/download";
+                L.polygon(polygonCoords, {color: 'red'}).addTo(map);
+                map.fitBounds(polygonCoords);
+            })
+            .catch(error => console.error('Error:', error));
         }
     </script>
-
 </body>
 </html>
