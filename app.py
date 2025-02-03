@@ -22,10 +22,10 @@ def get_coordinates(venue_name):
         if data:
             lat = float(data[0]["lat"])
             lon = float(data[0]["lon"])
-            return [lon, lat]  # Return actual location
+            return [lon, lat]  # Returns actual coordinates
         else:
             print(f"⚠️ No location found for {venue_name}")
-            return None  # Return None if no valid location found
+            return None  # Skip if location not found
     except Exception as e:
         print("Error fetching coordinates:", e)
         return None
@@ -42,8 +42,8 @@ def scrape_urls():
     for i, url in enumerate(uploaded_files):
         time.sleep(2)  # Simulate scraping delay
 
-        venue_name = f"Venue {i+1}"
-        address = f"Address {i+1}"
+        venue_name = f"Venue {i+1}"  # Placeholder, replace with real venue name
+        address = f"Address {i+1}"  # Placeholder, replace with actual address
         coordinates = get_coordinates(venue_name)
 
         if coordinates is None:
@@ -125,6 +125,12 @@ def download_geojson():
         return jsonify({"error": "GeoJSON file not found"}), 500
     
     return send_file(geojson_path, as_attachment=True)
+
+@app.route("/clear", methods=["POST"])
+def clear_uploaded_files():
+    global uploaded_files
+    uploaded_files = []
+    return jsonify({"message": "Uploaded files cleared"})
 
 if __name__ == "__main__":
     app.run(debug=True)
