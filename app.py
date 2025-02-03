@@ -2,17 +2,16 @@ from flask import Flask, request, jsonify, render_template, send_file
 import os
 import csv
 import json
-import time  # Simulate progress updates
+import time
 import requests
 
 app = Flask(__name__)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-uploaded_files = []  # Stores uploaded URLs
-scraping_progress = 0  # Tracks progress %
+uploaded_files = []
+scraping_progress = 0
 
-# Function to get real coordinates from OpenStreetMap API
 def get_coordinates(venue_name):
     API_URL = f"https://nominatim.openstreetmap.org/search?q={venue_name}&format=json"
     
@@ -25,26 +24,22 @@ def get_coordinates(venue_name):
             lon = float(data[0]["lon"])
             return [lon, lat]
         else:
-            return None  # No result found
+            return None
     except Exception as e:
         print("Error fetching coordinates:", e)
         return None
 
-# Function to simulate scraping (Replace with real logic)
 def scrape_urls(urls):
     global scraping_progress
     scraped_data = []
     total_urls = len(urls)
 
     for i, url in enumerate(urls):
-        time.sleep(1)  # Simulate scraping delay
+        time.sleep(1)
 
-        venue_name = f"Venue {i+1}"  
+        venue_name = f"Venue {i+1}"
         address = f"{i+1} Example St, City {i+1}, Country"
-
-        coordinates = get_coordinates(venue_name)
-        if not coordinates:
-            coordinates = [-74.006, 40.7128]  # Default fallback
+        coordinates = get_coordinates(venue_name) or [-74.006, 40.7128]
 
         scraped_data.append({
             "type": "Feature",
@@ -56,7 +51,6 @@ def scrape_urls(urls):
             }
         })
 
-        # Update progress
         scraping_progress = int(((i + 1) / total_urls) * 100)
 
     return scraped_data
@@ -116,7 +110,7 @@ def get_progress():
 @app.route("/start_scraping", methods=["POST"])
 def start_scraping():
     global scraping_progress
-    scraping_progress = 0  # Reset progress
+    scraping_progress = 0
 
     if not uploaded_files:
         return jsonify({"error": "No files uploaded"}), 400
@@ -134,7 +128,6 @@ def start_scraping():
 def download_geojson():
     geojson_path = os.path.join(UPLOAD_FOLDER, "scraped_data.geojson")
 
-    # Ensure the file exists before downloading
     if not os.path.exists(geojson_path):
         return jsonify({"error": "GeoJSON file not found"}), 500
     
