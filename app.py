@@ -8,7 +8,7 @@ app = Flask(__name__)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-API_KEY = "AIzaSyC-3B4JggRvgZFHpgN7JfYJqjidhtKo-cE"  # 🔹 Replace with your actual API key
+API_KEY = "AIzaSyDPyDGaLSn31QsLI-xXsTw0IFof8Bzn1KY"  # 🔹 Replace with your actual API key
 
 
 def get_coordinates(venue_name):
