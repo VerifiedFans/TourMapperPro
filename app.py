@@ -1,134 +1,148 @@
-from flask import Flask, render_template, request, jsonify, send_file
 import os
 import json
-import time
 import requests
-from bs4 import BeautifulSoup  # Web scraping
+from flask import Flask, render_template, request, jsonify, send_file
+from werkzeug.utils import secure_filename
 
+# Flask App Setup
 app = Flask(__name__)
 UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
-uploaded_urls = []
-scraping_progress = 0
+# Google Maps API Key (Replace with your real key)
+API_KEY = "YOUR_GOOGLE_MAPS_API_KEY_HERE"
 
-GOOGLE_MAPS_API_KEY = AIzaSyC-3B4JggRvgZFHpgN7JfYJqjidhtKo-cE
+# Progress tracking
+progress = {"value": 0}
 
-def extract_venue_name(url):
-    """Scrapes the event page to get the venue name."""
-    try:
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-            
-            # Look for a venue name inside <h1>, <h2>, or structured data
-            possible_venue = soup.find("h1")
-            if not possible_venue:
-                possible_venue = soup.find("h2")
-            
-            if possible_venue:
-                return possible_venue.get_text(strip=True)
-        
-        return "Unknown Venue"
-    except Exception as e:
-        print(f"Error scraping {url}: {e}")
-        return "Unknown Venue"
 
 def get_coordinates(venue_name):
-    """Fetch real coordinates using Google Maps API."""
-    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={venue_name}&key={GOOGLE_MAPS_API_KEY}"
+    """Fetch latitude, longitude, and formatted address using Google Maps API"""
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={venue_name}&key={API_KEY}"
     response = requests.get(url)
     data = response.json()
-    
-    if data["status"] == "OK":
+
+    if "results" in data and len(data["results"]) > 0:
         location = data["results"][0]["geometry"]["location"]
-        address = data["results"][0]["formatted_address"]
-        return location["lat"], location["lng"], address
+        formatted_address = data["results"][0]["formatted_address"]
+        return location["lat"], location["lng"], formatted_address
     return None, None, "Unknown Address"
+
 
 @app.route("/")
 def index():
     return render_template("index.html")
 
-@app.route("/upload", methods=["POST"])
-def upload():
-    global uploaded_urls
-    if "file" in request.files:
-        file = request.files["file"]
-        if file.filename.endswith(".txt") or file.filename.endswith(".csv"):
-            file_path = os.path.join(UPLOAD_FOLDER, file.filename)
-            file.save(file_path)
-            with open(file_path, "r") as f:
-                uploaded_urls = [line.strip() for line in f.readlines()]
-    elif "pasted_urls" in request.form:
-        pasted_urls = request.form["pasted_urls"].strip().split("\n")
-        uploaded_urls = [url.strip() for url in pasted_urls if url.strip()]
-    return jsonify({"uploaded_urls": uploaded_urls})
 
-@app.route("/view_files")
+@app.route("/upload", methods=["POST"])
+def upload_file():
+    """Handles file uploads (TXT, CSV) and manual copy-paste input."""
+    uploaded_files = request.files.getlist("file")
+    pasted_urls = request.form.get("pasted_urls")
+
+    all_urls = []
+
+    # Process uploaded files
+    for file in uploaded_files:
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        file.save(file_path)
+
+        with open(file_path, "r") as f:
+            all_urls.extend(f.read().splitlines())
+
+    # Process pasted URLs
+    if pasted_urls:
+        all_urls.extend(pasted_urls.strip().split("\n"))
+
+    # Remove duplicates
+    all_urls = list(set(all_urls))
+
+    # Save combined URLs to a file
+    urls_file = os.path.join(UPLOAD_FOLDER, "urls.txt")
+    with open(urls_file, "w") as f:
+        f.write("\n".join(all_urls))
+
+    return jsonify({"message": "Upload successful!", "urls": all_urls})
+
+
+@app.route("/view_files", methods=["GET"])
 def view_files():
-    return jsonify({"uploaded_urls": uploaded_urls})
+    """View uploaded URLs"""
+    urls_file = os.path.join(UPLOAD_FOLDER, "urls.txt")
+    if os.path.exists(urls_file):
+        with open(urls_file, "r") as f:
+            urls = f.read().splitlines()
+        return jsonify({"urls": urls})
+    return jsonify({"message": "No files uploaded yet"})
+
 
 @app.route("/clear_files", methods=["POST"])
 def clear_files():
-    global uploaded_urls
-    uploaded_urls = []
-    return jsonify({"message": "Uploaded files cleared."})
+    """Clears uploaded files and URLs."""
+    for file in os.listdir(UPLOAD_FOLDER):
+        os.remove(os.path.join(UPLOAD_FOLDER, file))
+    return jsonify({"message": "All uploaded files cleared"})
+
 
 @app.route("/start_scraping", methods=["POST"])
 def start_scraping():
-    global scraping_progress
-    scraping_progress = 0
+    """Starts scraping process and generates a GeoJSON file."""
+    urls_file = os.path.join(UPLOAD_FOLDER, "urls.txt")
+    geojson_file = os.path.join(UPLOAD_FOLDER, "scraped_data.geojson")
 
-    if not uploaded_urls:
-        return jsonify({"error": "No URLs uploaded."}), 400
+    if not os.path.exists(urls_file):
+        return jsonify({"error": "No URLs to scrape"}), 400
 
-    geojson_data = {
-        "type": "FeatureCollection",
-        "features": []
-    }
+    with open(urls_file, "r") as f:
+        urls = f.read().splitlines()
 
-    for i, url in enumerate(uploaded_urls):
-        time.sleep(1)  # Simulate processing delay
+    features = []
+    total_urls = len(urls)
 
-        venue_name = extract_venue_name(url)  # Get real venue name from event page
-        latitude, longitude, address = get_coordinates(venue_name)
-
-        if latitude is None or longitude is None:
-            latitude, longitude = 37.7749, -122.4194  # Default if lookup fails
+    for index, url in enumerate(urls, start=1):
+        venue_name = f"Venue {index}"  # Placeholder name
+        lat, lon, address = get_coordinates(venue_name)
 
         feature = {
             "type": "Feature",
-            "geometry": {
-                "type": "Point",
-                "coordinates": [longitude, latitude]
-            },
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
             "properties": {
                 "url": url,
-                "venue_name": venue_name,
-                "address": address
-            }
+                "venue_name": venue_name if venue_name != "Unknown Venue" else f"Venue {index}",
+                "address": address,
+            },
         }
-        geojson_data["features"].append(feature)
+        features.append(feature)
 
-        scraping_progress = int(((i + 1) / len(uploaded_urls)) * 100)
+        # Update progress
+        progress["value"] = int((index / total_urls) * 100)
 
-    geojson_path = os.path.join(UPLOAD_FOLDER, "scraped_data.geojson")
-    with open(geojson_path, "w") as f:
+    geojson_data = {"type": "FeatureCollection", "features": features}
+
+    with open(geojson_file, "w") as f:
         json.dump(geojson_data, f, indent=4)
 
-    return jsonify({"message": "Scraping completed.", "progress": scraping_progress})
+    progress["value"] = 100
+    return jsonify({"message": "Scraping completed!", "geojson": geojson_file})
 
-@app.route("/progress")
-def progress():
-    return jsonify({"progress": scraping_progress})
 
-@app.route("/download")
+@app.route("/progress", methods=["GET"])
+def get_progress():
+    """Returns current scraping progress"""
+    return jsonify({"progress": progress["value"]})
+
+
+@app.route("/download", methods=["GET"])
 def download_geojson():
-    geojson_path = os.path.join(UPLOAD_FOLDER, "scraped_data.geojson")
-    if os.path.exists(geojson_path):
-        return send_file(geojson_path, as_attachment=True)
-    return jsonify({"error": "No scraped data found."}), 404
+    """Allows user to download the generated GeoJSON file"""
+    geojson_file = os.path.join(UPLOAD_FOLDER, "scraped_data.geojson")
+    if os.path.exists(geojson_file):
+        return send_file(geojson_file, as_attachment=True)
+    return jsonify({"error": "No GeoJSON file found"}), 404
+
 
 if __name__ == "__main__":
     app.run(debug=True)
