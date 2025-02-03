@@ -1,4 +1,3 @@
-
 from flask import Flask, request, jsonify, render_template, send_file
 import os
 import csv
@@ -19,7 +18,7 @@ def get_coordinates(venue_name):
     try:
         response = requests.get(API_URL)
         data = response.json()
-
+        
         if data:
             lat = float(data[0]["lat"])
             lon = float(data[0]["lon"])
@@ -30,12 +29,16 @@ def get_coordinates(venue_name):
         print("Error fetching coordinates:", e)
         return None
 
-def scrape_urls(urls):
+def scrape_urls():
     global scraping_progress
     scraped_data = []
-    total_urls = len(urls)
+    total_urls = len(uploaded_files)
 
-    for i, url in enumerate(urls):
+    if total_urls == 0:
+        print("⚠️ No URLs to scrape!")
+        return []
+
+    for i, url in enumerate(uploaded_files):
         time.sleep(1)  # Simulate scraping delay
 
         venue_name = f"Venue {i+1}"
@@ -56,6 +59,7 @@ def scrape_urls(urls):
         })
 
         scraping_progress = int(((i + 1) / total_urls) * 100)
+        print(f"Scraping {i+1}/{total_urls}: {url} ({scraping_progress}%)")  # Log progress
 
     return scraped_data
 
@@ -87,6 +91,7 @@ def upload_file():
             urls = txtfile.read().splitlines()
 
     uploaded_files.extend(urls)
+    print("Uploaded URLs:", uploaded_files)  # Log uploaded URLs
     return jsonify({"message": "File uploaded", "urls": urls})
 
 @app.route("/paste_urls", methods=["POST"])
@@ -119,13 +124,14 @@ def start_scraping():
     if not uploaded_files:
         return jsonify({"error": "No files uploaded"}), 400
 
-    scraped_data = scrape_urls(uploaded_files)
+    scraped_data = scrape_urls()
     geojson_data = {"type": "FeatureCollection", "features": scraped_data}
 
     geojson_path = os.path.join(UPLOAD_FOLDER, "scraped_data.geojson")
     with open(geojson_path, "w", encoding="utf-8") as geojson_file:
         json.dump(geojson_data, geojson_file, indent=4)
 
+    print("✅ Scraping completed! File ready to download.")
     return jsonify({"message": "Scraping complete", "download_url": "/download"})
 
 @app.route("/download")
