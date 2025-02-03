@@ -3,6 +3,7 @@ import os
 import json
 import time
 import requests
+from bs4 import BeautifulSoup  # Web scraping
 
 app = Flask(__name__)
 UPLOAD_FOLDER = "uploads"
@@ -13,6 +14,26 @@ scraping_progress = 0
 
 GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"
 
+def extract_venue_name(url):
+    """Scrapes the event page to get the venue name."""
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
+            
+            # Look for a venue name inside <h1>, <h2>, or structured data
+            possible_venue = soup.find("h1")
+            if not possible_venue:
+                possible_venue = soup.find("h2")
+            
+            if possible_venue:
+                return possible_venue.get_text(strip=True)
+        
+        return "Unknown Venue"
+    except Exception as e:
+        print(f"Error scraping {url}: {e}")
+        return "Unknown Venue"
+
 def get_coordinates(venue_name):
     """Fetch real coordinates using Google Maps API."""
     url = f"https://maps.googleapis.com/maps/api/geocode/json?address={venue_name}&key={GOOGLE_MAPS_API_KEY}"
@@ -21,8 +42,9 @@ def get_coordinates(venue_name):
     
     if data["status"] == "OK":
         location = data["results"][0]["geometry"]["location"]
-        return location["lat"], location["lng"]
-    return None, None
+        address = data["results"][0]["formatted_address"]
+        return location["lat"], location["lng"], address
+    return None, None, "Unknown Address"
 
 @app.route("/")
 def index():
@@ -67,15 +89,13 @@ def start_scraping():
     }
 
     for i, url in enumerate(uploaded_urls):
-        time.sleep(1)  
+        time.sleep(1)  # Simulate processing delay
 
-        venue_name = f"Venue {i+1}"  # This should be replaced with actual scraped venue names
-        latitude, longitude = get_coordinates(venue_name)
+        venue_name = extract_venue_name(url)  # Get real venue name from event page
+        latitude, longitude, address = get_coordinates(venue_name)
 
         if latitude is None or longitude is None:
-            latitude, longitude = 37.7749, -122.4194  # Default to San Francisco
-
-        address = f"Real address for {venue_name}"  # Replace with actual scraped address
+            latitude, longitude = 37.7749, -122.4194  # Default if lookup fails
 
         feature = {
             "type": "Feature",
