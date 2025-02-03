@@ -12,19 +12,50 @@
                 zoom: 12,
             });
 
-            // Load GeoJSON data from server
+            // Load and display GeoJSON data
             fetch("/static/events.geojson")
                 .then(response => response.json())
-                .then(data => {
-                    map.data.addGeoJson(data);
-                })
+                .then(data => map.data.addGeoJson(data))
                 .catch(error => console.error("Error loading GeoJSON:", error));
+        }
+
+        function scrapeEvents() {
+            let urls = document.getElementById("eventUrls").value.split("\n").map(url => url.trim()).filter(url => url);
+            if (urls.length === 0) {
+                alert("Please enter at least one event URL.");
+                return;
+            }
+
+            fetch("/scrape-events", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ urls: urls }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.file) {
+                    document.getElementById("downloadLink").href = data.file;
+                    document.getElementById("downloadLink").style.display = "block";
+                    alert("GeoJSON file created successfully!");
+                } else {
+                    alert("Error: " + data.error);
+                }
+            })
+            .catch(error => console.error("Error:", error));
         }
     </script>
 </head>
 <body onload="initMap()">
     <h1>Welcome to TourMapper Pro</h1>
-    <div id="map" style="width: 100%; height: 500px;"></div>
+
+    <textarea id="eventUrls" placeholder="Enter event URLs, one per line" rows="5" cols="50"></textarea>
+    <br>
+    <button onclick="scrapeEvents()">Generate GeoJSON</button>
+    
+    <br><br>
+    <a id="downloadLink" href="#" style="display:none;" download="events.geojson">Download GeoJSON</a>
+
+    <div id="map" style="width: 100%; height: 500px; margin-top: 20px;"></div>
 </body>
 </html>
 
