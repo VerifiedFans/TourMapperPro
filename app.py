@@ -24,46 +24,46 @@ if not os.path.exists(GEOJSON_DIR):
 
 @app.route("/")
 def index():
-    """Render homepage and pass Google Maps API key."""
-    return render_template("index.html", google_maps_api_key=GOOGLE_MAPS_API_KEY)
+    """Render homepage."""
+    return render_template("index.html")
 
 
 @app.route("/scrape-events", methods=["POST"])
 def scrape_events():
     """Scrape event URLs, geocode locations, and generate GeoJSON."""
     try:
-        urls = request.json.get("urls", [])  # Get list of URLs from the frontend
+        urls = request.json.get("urls", [])
         features = []
 
         for url in urls:
             response = requests.get(url)
             soup = BeautifulSoup(response.text, "html.parser")
 
-            # Example: Extracting event name and address from HTML (Modify this for your specific case)
+            # Extract event name & address (Modify these based on actual HTML structure)
             event_name = soup.find("h1").text if soup.find("h1") else "Unknown Event"
             event_address = soup.find("p", class_="address").text if soup.find("p", class_="address") else None
 
             if event_address:
-                # Get latitude and longitude using Google Maps API
+                # Geocode address
                 geocode_result = gmaps.geocode(event_address)
                 if geocode_result:
                     location = geocode_result[0]["geometry"]["location"]
                     lat, lng = location["lat"], location["lng"]
 
-                    # Add event to GeoJSON structure
+                    # Add to GeoJSON
                     features.append({
                         "type": "Feature",
                         "geometry": {"type": "Point", "coordinates": [lng, lat]},
                         "properties": {"name": event_name, "address": event_address, "url": url}
                     })
 
-        # Save to GeoJSON file
+        # Save to GeoJSON
         geojson_data = {"type": "FeatureCollection", "features": features}
         geojson_filename = f"{GEOJSON_DIR}/events.geojson"
         with open(geojson_filename, "w") as geojson_file:
             json.dump(geojson_data, geojson_file, indent=4)
 
-        return jsonify({"message": "GeoJSON file created!", "file": "/static/events.geojson"}), 200
+        return jsonify({"message": "GeoJSON created!", "file": "/static/events.geojson"}), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
