@@ -1,93 +1,70 @@
-
 import os
-import json
+from flask import Flask, render_template, request, send_from_directory, jsonify
 import googlemaps
-from flask import Flask, request, jsonify, render_template, send_from_directory
 
-# Load API key from Heroku environment variable
-GOOGLE_MAPS_API_KEY = os.getenv(AIzaSyDPyDGaLSn31QsLI-xXsTw0IFof8Bzn1KY)
+app = Flask(__name__)
+
+# Load the Google Maps API key from Heroku environment variables
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+
 if not GOOGLE_MAPS_API_KEY:
     raise ValueError("Missing Google Maps API key. Set it in Heroku.")
 
-# Initialize Flask app & Google Maps client
-app = Flask(__name__)
+# Initialize Google Maps client
 gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
 
-# GeoJSON file location
-GEOJSON_FILE = "static/events.geojson"
 
 @app.route("/")
-def home():
-    """Render the index page."""
-    return render_template("index.html")
+def index():
+    """Render the homepage and pass the Google Maps API key."""
+    return render_template("index.html", google_maps_api_key=GOOGLE_MAPS_API_KEY)
 
-@app.route("/get_venue", methods=["GET"])
-def get_venue():
-    """Get venue footprint and return GeoJSON response."""
-    venue_name = request.args.get("name")
-    if not venue_name:
-        return jsonify({"error": "Venue name is required"}), 400
 
-    geojson_data = get_venue_data(venue_name)
+@app.route("/static/<path:filename>")
+def static_files(filename):
+    """Serve static files like GeoJSON and KML."""
+    return send_from_directory("static", filename)
 
-    if geojson_data:
-        # Save to file
-        save_geojson(geojson_data)
-        return jsonify(geojson_data)
-    
-    return jsonify({"error": "Could not fetch venue data"}), 500
 
-@app.route("/static/events.geojson")
-def serve_geojson():
-    """Serve the generated GeoJSON file."""
-    return send_from_directory("static", "events.geojson")
-
-def get_venue_data(venue_name):
-    """Fetch venue footprint and return as GeoJSON."""
-    try:
-        geocode_result = gmaps.geocode(venue_name)
-
-        if not geocode_result:
-            return None  # Venue not found
-
-        place_id = geocode_result[0]["place_id"]
-        place_details = gmaps.place(place_id, fields=["geometry"])
-
-        if "geometry" in place_details["result"] and "viewport" in place_details["result"]["geometry"]:
-            bounds = place_details["result"]["geometry"]["viewport"]
-
-            # Create a polygon for the venue footprint
-            polygon = {
+@app.route("/get-events")
+def get_events():
+    """API endpoint to return event data in GeoJSON format."""
+    geojson_data = {
+        "type": "FeatureCollection",
+        "features": [
+            {
                 "type": "Feature",
                 "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[
-                        [bounds["southwest"]["lng"], bounds["southwest"]["lat"]],
-                        [bounds["northeast"]["lng"], bounds["southwest"]["lat"]],
-                        [bounds["northeast"]["lng"], bounds["northeast"]["lat"]],
-                        [bounds["southwest"]["lng"], bounds["northeast"]["lat"]],
-                        [bounds["southwest"]["lng"], bounds["southwest"]["lat"]]
-                    ]]
+                    "type": "Point",
+                    "coordinates": [-74.0060, 40.7128]  # Example: NYC coordinates
                 },
-                "properties": {"name": venue_name}
+                "properties": {
+                    "name": "Madison Square Garden Event",
+                    "description": "A sample event happening at MSG"
+                }
             }
-            return polygon
-    except Exception as e:
-        print(f"Error fetching venue: {str(e)}")
-        return None
+        ]
+    }
+    return jsonify(geojson_data)
 
-def save_geojson(geojson_data):
-    """Save the GeoJSON data to a file."""
+
+@app.route("/get-coordinates", methods=["GET"])
+def get_coordinates():
+    """Fetch coordinates for a given address using Google Maps API."""
+    address = request.args.get("address")
+    if not address:
+        return jsonify({"error": "No address provided"}), 400
+
     try:
-        geojson_output = {
-            "type": "FeatureCollection",
-            "features": [geojson_data]
-        }
-
-        with open(GEOJSON_FILE, "w") as f:
-            json.dump(geojson_output, f, indent=4)
+        geocode_result = gmaps.geocode(address)
+        if geocode_result:
+            location = geocode_result[0]["geometry"]["location"]
+            return jsonify({"lat": location["lat"], "lng": location["lng"]})
+        else:
+            return jsonify({"error": "Address not found"}), 404
     except Exception as e:
-        print(f"Error saving GeoJSON: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
     app.run(debug=True)
