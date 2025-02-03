@@ -72,11 +72,15 @@ def upload_file():
 def view_files():
     """View uploaded URLs"""
     urls_file = os.path.join(UPLOAD_FOLDER, "urls.txt")
+    
+    # Ensure file exists before reading
     if os.path.exists(urls_file):
         with open(urls_file, "r") as f:
             urls = f.read().splitlines()
         return jsonify({"urls": urls})
-    return jsonify({"message": "No files uploaded yet"})
+    
+    return jsonify({"message": "No files uploaded yet"}), 400  # Return 400 error if no file
+
 
 
 @app.route("/clear_files", methods=["POST"])
