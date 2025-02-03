@@ -12,7 +12,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 uploaded_urls = []
 scraping_progress = 0
 
-GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"
+GOOGLE_MAPS_API_KEY = AIzaSyC-3B4JggRvgZFHpgN7JfYJqjidhtKo-cE
 
 def extract_venue_name(url):
     """Scrapes the event page to get the venue name."""
