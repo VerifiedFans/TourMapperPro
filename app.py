@@ -5,7 +5,7 @@ import googlemaps
 from flask import Flask, request, jsonify, render_template, send_from_directory
 
 # Load API key from Heroku environment variable
-GOOGLE_MAPS_API_KEY = os.getenv("AIzaSyDPyDGaLSn31QsLI-xXsTw0IFof8Bzn1KY")
+GOOGLE_MAPS_API_KEY = os.getenv(AIzaSyDPyDGaLSn31QsLI-xXsTw0IFof8Bzn1KY)
 if not GOOGLE_MAPS_API_KEY:
     raise ValueError("Missing Google Maps API key. Set it in Heroku.")
 
