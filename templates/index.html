@@ -4,92 +4,94 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
+    <style>
+        body { text-align: center; font-family: Arial, sans-serif; }
+        #drop-area { border: 2px dashed #ccc; padding: 20px; margin: 20px auto; width: 50%; }
+        #progress-bar { width: 50%; height: 20px; background: #ddd; margin: 10px auto; display: none; }
+        #progress { height: 100%; background: green; width: 0%; }
+    </style>
+</head>
+<body>
+
+    <h1>TourMapper Pro</h1>
+
+    <!-- File Upload & Copy-Paste -->
+    <input type="file" id="file-upload">
+    <textarea id="pasted-urls" placeholder="Paste URLs here (one per line)"></textarea>
+    <button onclick="uploadUrls()">Upload URLs</button>
+
+    <!-- View & Clear Uploaded Files -->
+    <button onclick="viewUploadedFiles()">View Uploaded Files</button>
+    <button onclick="clearUploadedFiles()">Clear Files</button>
+
+    <!-- Start Scraping -->
+    <button onclick="startScraping()">Start Scraping</button>
+
+    <!-- Progress Bar -->
+    <div id="progress-bar"><div id="progress"></div></div>
+
+    <!-- Download Button -->
+    <button onclick="downloadGeoJSON()">Download GeoJSON</button>
+
+    <!-- Drag & Drop Upload -->
+    <div id="drop-area">Drag & Drop Files Here</div>
+
     <script>
-        function uploadFile() {
+        function uploadUrls() {
+            let fileInput = document.getElementById("file-upload");
+            let pastedUrls = document.getElementById("pasted-urls").value;
             let formData = new FormData();
-            let fileInput = document.getElementById("fileInput");
-            formData.append("file", fileInput.files[0]);
+
+            if (fileInput.files.length > 0) {
+                formData.append("file", fileInput.files[0]);
+            } else if (pastedUrls.trim() !== "") {
+                formData.append("pasted_urls", pastedUrls);
+            }
 
             fetch("/upload", { method: "POST", body: formData })
-                .then(response => response.json())
-                .then(data => {
-                    alert(data.message);
-                    loadUploadedFiles();
-                })
-                .catch(error => console.error("Error:", error));
+                .then(res => res.json())
+                .then(data => alert("Uploaded successfully!"))
+                .catch(err => alert("Upload failed."));
         }
 
-        function loadUploadedFiles() {
-            document.getElementById("uploadedFiles").innerHTML = uploaded_files.join("<br>");
+        function viewUploadedFiles() {
+            fetch("/view_files")
+                .then(res => res.json())
+                .then(data => alert("Uploaded URLs:\n" + data.uploaded_urls.join("\n")))
+                .catch(err => alert("Failed to retrieve files."));
+        }
+
+        function clearUploadedFiles() {
+            fetch("/clear_files", { method: "POST" })
+                .then(res => res.json())
+                .then(data => alert(data.message))
+                .catch(err => alert("Clear failed."));
         }
 
         function startScraping() {
-            document.getElementById("progressBar").style.width = "0%";
-            document.getElementById("progressText").innerText = "0%";
+            document.getElementById("progress-bar").style.display = "block";
+            document.getElementById("progress").style.width = "0%";
+
             fetch("/start_scraping", { method: "POST" })
-                .then(response => response.json())
+                .then(res => res.json())
                 .then(data => {
-                    if (data.download_url) {
-                        updateProgress();
-                    }
-                })
-                .catch(error => console.error("Error:", error));
-        }
-
-        function updateProgress() {
-            fetch("/progress")
-                .then(response => response.json())
-                .then(data => {
-                    document.getElementById("progressBar").style.width = data.progress + "%";
-                    document.getElementById("progressText").innerText = data.progress + "%";
-
-                    if (data.progress < 100) {
-                        setTimeout(updateProgress, 2000);
-                    }
+                    let progress = document.getElementById("progress");
+                    let interval = setInterval(() => {
+                        fetch("/progress")
+                            .then(res => res.json())
+                            .then(data => {
+                                progress.style.width = data.progress + "%";
+                                if (data.progress >= 100) clearInterval(interval);
+                            });
+                    }, 1000);
                 });
         }
 
         function downloadGeoJSON() {
             window.location.href = "/download";
         }
-
-        function clearFiles() {
-            fetch("/clear", { method: "POST" })
-                .then(response => response.json())
-                .then(data => {
-                    alert(data.message);
-                    document.getElementById("uploadedFiles").innerHTML = "";
-                })
-                .catch(error => console.error("Error:", error));
-        }
     </script>
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; }
-        #progressContainer { width: 50%; background-color: #ddd; margin: auto; }
-        #progressBar { height: 25px; background-color: green; width: 0%; text-align: center; color: white; }
-    </style>
-</head>
-<body>
-    <h1>TourMapper Pro</h1>
 
-    <h3>Upload URLs</h3>
-    <input type="file" id="fileInput">
-    <button onclick="uploadFile()">Upload</button>
-
-    <h3>Uploaded Files</h3>
-    <div id="uploadedFiles"></div>
-
-    <h3>Actions:</h3>
-    <button onclick="startScraping()">Start Scraping</button>
-    <button onclick="clearFiles()">Clear Files</button>
-
-    <h3>Progress</h3>
-    <div id="progressContainer">
-        <div id="progressBar"><span id="progressText">0%</span></div>
-    </div>
-
-    <h3>Download</h3>
-    <button onclick="downloadGeoJSON()">Download GeoJSON</button>
 </body>
 </html>
 
