@@ -1,3 +1,4 @@
+
 from flask import Flask, request, jsonify, render_template, send_file
 import os
 import csv
@@ -14,17 +15,17 @@ scraping_progress = 0
 
 def get_coordinates(venue_name):
     API_URL = f"https://nominatim.openstreetmap.org/search?q={venue_name}&format=json"
-    
+
     try:
         response = requests.get(API_URL)
         data = response.json()
-        
+
         if data:
             lat = float(data[0]["lat"])
             lon = float(data[0]["lon"])
-            return [lon, lat]
+            return [lon, lat]  # Return actual location
         else:
-            return None
+            return None  # Return None if no valid location found
     except Exception as e:
         print("Error fetching coordinates:", e)
         return None
@@ -35,11 +36,14 @@ def scrape_urls(urls):
     total_urls = len(urls)
 
     for i, url in enumerate(urls):
-        time.sleep(1)
+        time.sleep(1)  # Simulate scraping delay
 
         venue_name = f"Venue {i+1}"
-        address = f"{i+1} Example St, City {i+1}, Country"
-        coordinates = get_coordinates(venue_name) or [-74.006, 40.7128]
+        address = f"Address {i+1}"
+        coordinates = get_coordinates(venue_name)
+
+        if coordinates is None:
+            continue  # Skip if location is not found
 
         scraped_data.append({
             "type": "Feature",
@@ -64,11 +68,11 @@ def upload_file():
     global uploaded_files
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
-    
+
     file = request.files["file"]
     if file.filename == "":
         return jsonify({"error": "No selected file"}), 400
-    
+
     file_path = os.path.join(UPLOAD_FOLDER, file.filename)
     file.save(file_path)
 
