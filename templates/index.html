@@ -5,29 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
     <script>
-        function uploadFile() {
-            let formData = new FormData();
-            let fileInput = document.getElementById("fileInput");
-            formData.append("file", fileInput.files[0]);
-
-            fetch("/upload", { method: "POST", body: formData })
-                .then(response => response.json())
-                .then(data => alert(data.message))
-                .catch(error => console.error("Error:", error));
-        }
-
-        function pasteUrls() {
-            let urls = document.getElementById("pasteInput").value.split("\n").map(url => url.trim()).filter(url => url);
-            fetch("/paste_urls", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ urls })
-            })
-            .then(response => response.json())
-            .then(data => alert(data.message))
-            .catch(error => console.error("Error:", error));
-        }
-
         function startScraping() {
             document.getElementById("progressBar").style.width = "0%";
             document.getElementById("progressText").innerText = "0%";
@@ -49,44 +26,22 @@
                     document.getElementById("progressText").innerText = data.progress + "%";
 
                     if (data.progress < 100) {
-                        setTimeout(updateProgress, 500);
+                        setTimeout(updateProgress, 2000);
                     }
                 });
-        }
-
-        function downloadGeoJSON() {
-            window.location.href = "/download";
-        }
-
-        function clearFiles() {
-            fetch("/clear", { method: "POST" })
-                .then(response => response.json())
-                .then(data => alert(data.message))
-                .catch(error => console.error("Error:", error));
         }
     </script>
     <style>
         body { font-family: Arial, sans-serif; text-align: center; }
         #progressContainer { width: 50%; background-color: #ddd; margin: auto; }
         #progressBar { height: 25px; background-color: green; width: 0%; text-align: center; color: white; }
-        textarea { width: 60%; height: 100px; margin: 10px; }
     </style>
 </head>
 <body>
     <h1>TourMapper Pro</h1>
 
-    <h3>Upload a File:</h3>
-    <input type="file" id="fileInput">
-    <button onclick="uploadFile()">Upload File</button>
-
-    <h3>Or Copy & Paste URLs:</h3>
-    <textarea id="pasteInput" placeholder="Paste URLs here, one per line..."></textarea><br>
-    <button onclick="pasteUrls()">Submit URLs</button>
-
     <h3>Actions:</h3>
     <button onclick="startScraping()">Start Scraping</button>
-    <button onclick="clearFiles()">Clear Files</button>
-    <button onclick="downloadGeoJSON()">Download GeoJSON</button>
 
     <h3>Progress</h3>
     <div id="progressContainer">
