@@ -24,6 +24,7 @@ def get_coordinates(venue_name):
             lon = float(data[0]["lon"])
             return [lon, lat]  # Return actual location
         else:
+            print(f"⚠️ No location found for {venue_name}")
             return None  # Return None if no valid location found
     except Exception as e:
         print("Error fetching coordinates:", e)
@@ -39,7 +40,7 @@ def scrape_urls():
         return []
 
     for i, url in enumerate(uploaded_files):
-        time.sleep(1)  # Simulate scraping delay
+        time.sleep(2)  # Simulate scraping delay
 
         venue_name = f"Venue {i+1}"
         address = f"Address {i+1}"
@@ -59,7 +60,7 @@ def scrape_urls():
         })
 
         scraping_progress = int(((i + 1) / total_urls) * 100)
-        print(f"Scraping {i+1}/{total_urls}: {url} ({scraping_progress}%)")  # Log progress
+        print(f"✅ Scraping {i+1}/{total_urls}: {url} ({scraping_progress}%)")  
 
     return scraped_data
 
@@ -91,35 +92,13 @@ def upload_file():
             urls = txtfile.read().splitlines()
 
     uploaded_files.extend(urls)
-    print("Uploaded URLs:", uploaded_files)  # Log uploaded URLs
+    print("Uploaded URLs:", uploaded_files)  
     return jsonify({"message": "File uploaded", "urls": urls})
-
-@app.route("/paste_urls", methods=["POST"])
-def paste_urls():
-    global uploaded_files
-    data = request.get_json()
-    urls = data.get("urls", [])
-    uploaded_files.extend(urls)
-    return jsonify({"message": "Pasted URLs added!"})
-
-@app.route("/uploaded_urls", methods=["GET"])
-def get_uploaded_urls():
-    return jsonify({"urls": uploaded_files})
-
-@app.route("/clear", methods=["POST"])
-def clear_uploaded_files():
-    global uploaded_files
-    uploaded_files = []
-    return jsonify({"message": "Uploaded files cleared"})
-
-@app.route("/progress", methods=["GET"])
-def get_progress():
-    return jsonify({"progress": scraping_progress})
 
 @app.route("/start_scraping", methods=["POST"])
 def start_scraping():
     global scraping_progress
-    scraping_progress = 0
+    scraping_progress = 0  
 
     if not uploaded_files:
         return jsonify({"error": "No files uploaded"}), 400
@@ -133,6 +112,10 @@ def start_scraping():
 
     print("✅ Scraping completed! File ready to download.")
     return jsonify({"message": "Scraping complete", "download_url": "/download"})
+
+@app.route("/progress", methods=["GET"])
+def get_progress():
+    return jsonify({"progress": scraping_progress})
 
 @app.route("/download")
 def download_geojson():
