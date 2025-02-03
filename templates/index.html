@@ -4,131 +4,72 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
-    <style>
-        body { text-align: center; font-family: Arial, sans-serif; }
-        .container { max-width: 600px; margin: auto; padding: 20px; }
-        #dropZone { border: 2px dashed #007bff; padding: 20px; cursor: pointer; margin-bottom: 10px; }
-        #progressBar { width: 100%; background: #ccc; height: 20px; display: none; }
-        #progressBar div { height: 100%; width: 0%; background: #28a745; }
-        #uploadedList { text-align: left; margin-top: 10px; }
-        textarea { width: 100%; height: 80px; margin-top: 10px; }
-        button { padding: 10px; margin: 5px; cursor: pointer; }
-    </style>
-</head>
-<body>
-
-    <div class="container">
-        <img src="/static/logo.png" alt="Logo" width="150">
-        <h2>TourMapper Pro</h2>
-
-        <div id="dropZone" onclick="document.getElementById('fileInput').click();">
-            Drag & Drop or Click to Upload URLs (CSV/TXT)
-        </div>
-        <input type="file" id="fileInput" accept=".csv,.txt" multiple style="display: none;">
-
-        <h3>OR Paste URLs Below:</h3>
-        <textarea id="urlTextarea" placeholder="Paste URLs here, one per line"></textarea>
-        <button onclick="pasteUrls()">Add Pasted URLs</button>
-
-        <button onclick="viewUploadedFiles()">View Uploaded Files</button>
-        <button onclick="clearFiles()">Clear Files</button>
-        <button onclick="startScraping()">Start Scraping</button>
-        <button id="downloadButton" style="display: none;" onclick="downloadGeoJSON()">Download GeoJSON</button>
-
-        <div id="progressBar"><div></div></div>
-        <div id="uploadedList"></div>
-    </div>
-
     <script>
-        document.getElementById("fileInput").addEventListener("change", function (event) {
-            let files = event.target.files;
-            if (files.length > 0) {
-                let formData = new FormData();
-                for (let file of files) {
-                    formData.append("file", file);
-                }
+        function uploadFile() {
+            let formData = new FormData();
+            let fileInput = document.getElementById("fileInput");
+            formData.append("file", fileInput.files[0]);
 
-                fetch("/upload", { method: "POST", body: formData })
+            fetch("/upload", { method: "POST", body: formData })
                 .then(response => response.json())
-                .then(data => {
-                    alert("Upload successful!");
-                    viewUploadedFiles();
-                })
-                .catch(error => console.error("Upload error:", error));
-            }
-        });
-
-        function pasteUrls() {
-            let text = document.getElementById("urlTextarea").value;
-            let urls = text.split("\n").map(url => url.trim()).filter(url => url);
-            if (urls.length === 0) {
-                alert("No URLs entered!");
-                return;
-            }
-
-            fetch("/paste_urls", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ urls })
-            })
-            .then(response => response.json())
-            .then(() => {
-                alert("Pasted URLs added!");
-                document.getElementById("urlTextarea").value = "";
-                viewUploadedFiles();
-            });
-        }
-
-        function viewUploadedFiles() {
-            fetch("/uploaded_urls")
-            .then(response => response.json())
-            .then(data => {
-                let listHtml = "<h3>Uploaded URLs:</h3><ul>";
-                data.urls.forEach(url => {
-                    listHtml += `<li>${url}</li>`;
-                });
-                listHtml += "</ul>";
-                document.getElementById("uploadedList").innerHTML = listHtml;
-            });
-        }
-
-        function clearFiles() {
-            fetch("/clear", { method: "POST" })
-            .then(response => response.json())
-            .then(() => {
-                document.getElementById("uploadedList").innerHTML = "";
-                alert("Files cleared!");
-            });
+                .then(data => alert(data.message))
+                .catch(error => console.error("Error:", error));
         }
 
         function startScraping() {
-            document.getElementById("progressBar").style.display = "block";
-            let progress = document.getElementById("progressBar").firstElementChild;
-            let width = 0;
-            let interval = setInterval(() => {
-                if (width >= 100) {
-                    clearInterval(interval);
-                } else {
-                    width += 10;
-                    progress.style.width = width + "%";
-                }
-            }, 1000);
-
             fetch("/start_scraping", { method: "POST" })
-            .then(response => response.json())
-            .then(data => {
-                clearInterval(interval);
-                progress.style.width = "100%";
-                alert("Scraping complete!");
-                document.getElementById("downloadButton").style.display = "block";
-            });
+                .then(response => response.json())
+                .then(data => {
+                    if (data.download_url) {
+                        updateProgress();
+                    }
+                })
+                .catch(error => console.error("Error:", error));
+        }
+
+        function updateProgress() {
+            fetch("/progress")
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById("progressBar").style.width = data.progress + "%";
+                    document.getElementById("progressText").innerText = data.progress + "%";
+
+                    if (data.progress < 100) {
+                        setTimeout(updateProgress, 500);
+                    }
+                });
         }
 
         function downloadGeoJSON() {
             window.location.href = "/download";
         }
-    </script>
 
+        function clearFiles() {
+            fetch("/clear", { method: "POST" })
+                .then(response => response.json())
+                .then(data => alert(data.message))
+                .catch(error => console.error("Error:", error));
+        }
+    </script>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        #progressContainer { width: 50%; background-color: #ddd; margin: auto; }
+        #progressBar { height: 25px; background-color: green; width: 0%; text-align: center; color: white; }
+    </style>
+</head>
+<body>
+    <h1>TourMapper Pro</h1>
+
+    <input type="file" id="fileInput">
+    <button onclick="uploadFile()">Upload File</button>
+    <button onclick="startScraping()">Start Scraping</button>
+    <button onclick="clearFiles()">Clear Files</button>
+    <button onclick="downloadGeoJSON()">Download GeoJSON</button>
+
+    <h3>Progress</h3>
+    <div id="progressContainer">
+        <div id="progressBar"><span id="progressText">0%</span></div>
+    </div>
 </body>
 </html>
      
