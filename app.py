@@ -2,7 +2,7 @@ from flask import Flask, render_template, request, jsonify, send_file
 import os
 import json
 import time
-import csv
+import requests
 
 app = Flask(__name__)
 UPLOAD_FOLDER = "uploads"
@@ -11,12 +11,23 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 uploaded_urls = []
 scraping_progress = 0
 
-# Home Page
+GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"
+
+def get_coordinates(venue_name):
+    """Fetch real coordinates using Google Maps API."""
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={venue_name}&key={GOOGLE_MAPS_API_KEY}"
+    response = requests.get(url)
+    data = response.json()
+    
+    if data["status"] == "OK":
+        location = data["results"][0]["geometry"]["location"]
+        return location["lat"], location["lng"]
+    return None, None
+
 @app.route("/")
 def index():
     return render_template("index.html")
 
-# Upload URLs (File Upload or Copy-Paste)
 @app.route("/upload", methods=["POST"])
 def upload():
     global uploaded_urls
@@ -32,19 +43,16 @@ def upload():
         uploaded_urls = [url.strip() for url in pasted_urls if url.strip()]
     return jsonify({"uploaded_urls": uploaded_urls})
 
-# View Uploaded Files
 @app.route("/view_files")
 def view_files():
     return jsonify({"uploaded_urls": uploaded_urls})
 
-# Clear Uploaded Files
 @app.route("/clear_files", methods=["POST"])
 def clear_files():
     global uploaded_urls
     uploaded_urls = []
     return jsonify({"message": "Uploaded files cleared."})
 
-# Start Scraping
 @app.route("/start_scraping", methods=["POST"])
 def start_scraping():
     global scraping_progress
@@ -59,11 +67,15 @@ def start_scraping():
     }
 
     for i, url in enumerate(uploaded_urls):
-        # Simulated scraping process (Replace this with actual web scraping)
         time.sleep(1)  
-        venue_name = f"Venue {i+1}"  
-        address = f"123 Example St, City {i+1}"  
-        latitude, longitude = 37.7749, -122.4194  
+
+        venue_name = f"Venue {i+1}"  # This should be replaced with actual scraped venue names
+        latitude, longitude = get_coordinates(venue_name)
+
+        if latitude is None or longitude is None:
+            latitude, longitude = 37.7749, -122.4194  # Default to San Francisco
+
+        address = f"Real address for {venue_name}"  # Replace with actual scraped address
 
         feature = {
             "type": "Feature",
@@ -87,12 +99,10 @@ def start_scraping():
 
     return jsonify({"message": "Scraping completed.", "progress": scraping_progress})
 
-# Get Scraping Progress
 @app.route("/progress")
 def progress():
     return jsonify({"progress": scraping_progress})
 
-# Download GeoJSON
 @app.route("/download")
 def download_geojson():
     geojson_path = os.path.join(UPLOAD_FOLDER, "scraped_data.geojson")
