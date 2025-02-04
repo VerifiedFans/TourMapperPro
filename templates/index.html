@@ -3,76 +3,55 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TourMapper Pro</title>
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-        #progressContainer { display: none; margin-top: 10px; }
-        #progressBar { width: 0%; height: 20px; background: green; }
-    </style>
-</head>
-<body>
-
-    <h2>Upload URLs for Scraping</h2>
-    <textarea id="urlInput" rows="5" cols="50" placeholder="Paste URLs here..."></textarea><br>
-    <button onclick="uploadUrls()">Upload & Start Scraping</button>
-
-    <!-- Progress Bar -->
-    <div id="progressContainer">
-        <p>Scraping Progress:</p>
-        <div style="width: 100%; background: #ddd;">
-            <div id="progressBar"></div>
-        </div>
-    </div>
-
-    <!-- Download Button -->
-    <div id="downloadContainer" style="display:none; margin-top: 20px;">
-        <a id="downloadLink" href="#" download="events.geojson">
-            <button>Download GeoJSON</button>
-        </a>
-    </div>
-
+    <title>Upload URLs for Processing</title>
     <script>
-        function uploadUrls() {
-            let urls = document.getElementById("urlInput").value.trim().split("\n");
-            if (urls.length === 0 || urls[0] === "") {
+        function uploadURLs() {
+            let urls = document.getElementById('urls').value.split("\n").map(url => url.trim()).filter(url => url);
+            if (urls.length === 0) {
                 alert("Please enter at least one URL.");
                 return;
             }
 
-            document.getElementById("progressContainer").style.display = "block";
-            document.getElementById("downloadContainer").style.display = "none"; // Hide download initially
-            let progressBar = document.getElementById("progressBar");
-            progressBar.style.width = "0%";
+            document.getElementById('progress').innerText = "Processing...";
 
-            fetch("/process-urls", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ urls })
+            fetch('/upload', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ urls: urls })
             })
             .then(response => response.json())
             .then(data => {
-                let total = data.urls.length;
-                let completed = 0;
-
-                function updateProgress() {
-                    completed++;
-                    let progress = (completed / total) * 100;
-                    progressBar.style.width = progress + "%";
-
-                    if (completed >= total) {
-                        alert("Scraping Complete!");
-                        document.getElementById("downloadContainer").style.display = "block";
-                        document.getElementById("downloadLink").href = data.download_url;
-                    }
+                if (data.task_id) {
+                    checkStatus(data.task_id);
+                } else {
+                    alert("Error: " + JSON.stringify(data));
                 }
+            });
+        }
 
-                data.urls.forEach((url, index) => {
-                    setTimeout(updateProgress, index * 1000);
-                });
-            })
-            .catch(error => alert("Upload Failed: " + error));
+        function checkStatus(taskId) {
+            fetch(`/task-status/${taskId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.state === "PROGRESS") {
+                    document.getElementById('progress').innerText = `Processing: ${data.progress.current} / ${data.progress.total}`;
+                    setTimeout(() => checkStatus(taskId), 2000);
+                } else if (data.state === "SUCCESS") {
+                    document.getElementById('progress').innerText = "Processing complete!";
+                    document.getElementById('download').innerHTML = `<a href="/download/${data.geojson_file.split('/').pop()}">Download GeoJSON</a>`;
+                } else {
+                    document.getElementById('progress').innerText = "Error or unknown status.";
+                }
+            });
         }
     </script>
-
+</head>
+<body>
+    <h2>Upload URLs for Processing</h2>
+    <textarea id="urls" rows="5" cols="50" placeholder="Enter URLs, one per line..."></textarea>
+    <br>
+    <button onclick="uploadURLs()">Upload & Process</button>
+    <p id="progress"></p>
+    <div id="download"></div>
 </body>
 </html>
