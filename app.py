@@ -1,89 +1,135 @@
 import os
-import time
 import json
-import ssl
+import time
 from flask import Flask, render_template, request, jsonify, send_file
 from celery import Celery
+import redis
+import requests
+from bs4 import BeautifulSoup
+from shapely.geometry import Polygon, mapping
+import geojson
 
-# Initialize Flask app
+# Flask app
 app = Flask(__name__)
 
-# Fix for Redis SSL connection
-redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+# Redis & Celery Config
+redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
 
-# Redis & Celery Configuration (Fixing SSL issue)
-app.config['CELERY_BROKER_URL'] = redis_url
-app.config['CELERY_RESULT_BACKEND'] = redis_url
-app.config['CELERY_REDIS_BACKEND_USE_SSL'] = {
-    'ssl_cert_reqs': ssl.CERT_NONE  # Set this to CERT_REQUIRED for higher security
-}
-
-# Initialize Celery
-celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
-celery.conf.update(
-    broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},  # Disable strict SSL
-    redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE}
+celery = Celery(
+    app.name,
+    broker=redis_url,
+    backend=redis_url
 )
 
-# Folder for processed files
-UPLOAD_FOLDER = 'processed_files'
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# Ensure Redis is available
+try:
+    redis_client = redis.from_url(redis_url)
+    redis_client.ping()
+    print("✅ Redis Connected!")
+except redis.exceptions.ConnectionError as e:
+    print(f"🔴 Redis Connection Failed: {e}")
 
-@app.route('/')
-def home():
-    return render_template('index.html')
+# Scraping Function (Extract Venue Info)
+def scrape_venue_data(url):
+    try:
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, 'html.parser')
 
+        # Extracting venue details (modify selectors as needed)
+        venue_name = soup.find("h1").text.strip()
+        address = soup.find("p", class_="address").text.strip()
+        city_state_zip = soup.find("p", class_="city-state-zip").text.strip()
+
+        # Fake Lat/Lon for Demo (replace with actual geocoding logic)
+        lat, lon = 37.7749, -122.4194
+
+        return {
+            "venue_name": venue_name,
+            "address": address,
+            "city_state_zip": city_state_zip,
+            "latitude": lat,
+            "longitude": lon
+        }
+    except Exception as e:
+        return {"error": f"Failed to scrape {url}: {str(e)}"}
+
+# Celery Task
 @celery.task(bind=True)
 def process_urls(self, urls):
-    """Simulate scraping URLs and generating a GeoJSON file"""
-    results = []
+    geojson_features = []
     
-    for i, url in enumerate(urls):
-        time.sleep(2)  # Simulating processing delay
-        results.append({"url": url, "status": "Processed", "lat": 40.7128, "lon": -74.0060})
-        self.update_state(state='PROGRESS', meta={'current': i + 1, 'total': len(urls)})
+    for index, url in enumerate(urls):
+        venue_data = scrape_venue_data(url)
 
-    # Save results as GeoJSON
-    geojson_data = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "properties": {"url": entry["url"]},
-                "geometry": {"type": "Point", "coordinates": [entry["lon"], entry["lat"]]},
+        if "error" in venue_data:
+            continue  # Skip if scraping failed
+
+        polygon = Polygon([
+            (venue_data["longitude"] - 0.001, venue_data["latitude"] - 0.001),
+            (venue_data["longitude"] + 0.001, venue_data["latitude"] - 0.001),
+            (venue_data["longitude"] + 0.001, venue_data["latitude"] + 0.001),
+            (venue_data["longitude"] - 0.001, venue_data["latitude"] + 0.001),
+            (venue_data["longitude"] - 0.001, venue_data["latitude"] - 0.001),
+        ])
+
+        feature = geojson.Feature(
+            geometry=mapping(polygon),
+            properties={
+                "venue_name": venue_data["venue_name"],
+                "address": venue_data["address"],
+                "city_state_zip": venue_data["city_state_zip"],
+                "date": "2025-02-04"
             }
-            for entry in results
-        ],
-    }
+        )
+        geojson_features.append(feature)
 
-    geojson_filename = os.path.join(UPLOAD_FOLDER, f"processed_{int(time.time())}.geojson")
-    with open(geojson_filename, "w") as geojson_file:
-        json.dump(geojson_data, geojson_file)
+        # Update progress
+        self.update_state(state='PROGRESS', meta={'current': index + 1, 'total': len(urls)})
 
-    return {"status": "Completed", "geojson_file": geojson_filename}
+    # Save as GeoJSON
+    geojson_data = geojson.FeatureCollection(geojson_features)
+    output_file = "output.geojson"
+    with open(output_file, "w") as f:
+        json.dump(geojson_data, f)
 
-@app.route('/upload', methods=['POST'])
+    return {"status": "completed", "file_path": output_file}
+
+# Route: Home Page
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+# Route: Handle File Upload
+@app.route("/upload", methods=["POST"])
 def upload():
-    urls = request.json.get('urls', [])
-    if not urls:
-        return jsonify({"error": "No URLs provided"}), 400
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files['file']
+    urls = file.read().decode("utf-8").splitlines()
 
     task = process_urls.apply_async(args=[urls])
-    return jsonify({"task_id": task.id, "status": "Processing"}), 202
+    return jsonify({"task_id": task.id})
 
-@app.route('/task-status/<task_id>')
+# Route: Get Task Status
+@app.route("/task-status/<task_id>")
 def task_status(task_id):
     task = process_urls.AsyncResult(task_id)
-    if task.state == 'PROGRESS':
-        return jsonify({"state": task.state, "progress": task.info})
-    elif task.state == 'SUCCESS':
-        return jsonify({"state": task.state, "geojson_file": task.result["geojson_file"]})
+    if task.state == "PENDING":
+        response = {"state": task.state, "progress": 0}
+    elif task.state == "PROGRESS":
+        response = {"state": task.state, "progress": (task.info["current"] / task.info["total"]) * 100}
+    elif task.state == "SUCCESS":
+        response = {"state": task.state, "progress": 100, "file_url": "/download"}
     else:
-        return jsonify({"state": task.state})
+        response = {"state": task.state}
+    
+    return jsonify(response)
 
-@app.route('/download/<filename>')
-def download(filename):
-    return send_file(os.path.join(UPLOAD_FOLDER, filename), as_attachment=True)
+# Route: Download Processed File
+@app.route("/download")
+def download():
+    return send_file("output.geojson", as_attachment=True)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True)
