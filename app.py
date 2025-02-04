@@ -1,113 +1,121 @@
-
 import os
+import time
 import json
 import redis
-from flask import Flask, request, jsonify, render_template, send_file
+import requests
+from flask import Flask, render_template, request, jsonify, send_file
+from flask_cors import CORS
 from celery import Celery
+from kombu import Exchange, Queue
 from werkzeug.utils import secure_filename
 
-# Initialize Flask app
 app = Flask(__name__)
+CORS(app)
 
-# ✅ Fetch Redis URL from Heroku Config Vars (Fixes SSL Cert Issue)
-REDIS_URL = os.getenv("REDIS_URL")
-CELERY_BROKER_URL = f"{REDIS_URL}?ssl_cert_reqs=CERT_NONE"
-CELERY_RESULT_BACKEND = f"{REDIS_URL}?ssl_cert_reqs=CERT_NONE"
+# **✅ Configure Redis & Celery**
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")  # Default if REDIS_URL is not set
+CELERY_BROKER_URL = REDIS_URL.replace("rediss://", "redis://")  # Fix SSL issue
+CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 
-# ✅ Configure Celery
 celery = Celery(app.name, broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
-celery.conf.update(task_serializer="json", accept_content=["json"], result_serializer="json")
+celery.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    broker_transport_options={"visibility_timeout": 3600},  # Prevent timeout issues
+    task_queues=(Queue("default", Exchange("default"), routing_key="default"),),
+)
 
-# ✅ Set Upload Folder
+# **✅ Redis Connection**
+try:
+    redis_client = redis.from_url(CELERY_BROKER_URL)
+    redis_client.ping()
+    print("✅ Redis Connected Successfully!")
+except redis.ConnectionError:
+    print("❌ Redis Connection Failed!")
+
+# **📂 File Upload Configuration**
 UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+ALLOWED_EXTENSIONS = {"txt", "csv"}
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# 📌 Home Route (Renders Upload UI)
-@app.route("/")
-def home():
-    return render_template("index.html")
+# **🚀 Celery Task: Process URLs**
+@celery.task(bind=True)
+def process_urls(self, urls):
+    results = []
+    
+    for index, url in enumerate(urls):
+        try:
+            response = requests.get(url, timeout=5)
+            data = {"url": url, "status": response.status_code, "content_length": len(response.text)}
+            results.append(data)
+        except requests.exceptions.RequestException as e:
+            results.append({"url": url, "error": str(e)})
 
+        # Update task progress
+        self.update_state(state="PROGRESS", meta={"current": index + 1, "total": len(urls)})
+        time.sleep(1)  # Simulate delay
 
-# 📌 Upload Handler Route
+    output_file = os.path.join(UPLOAD_FOLDER, "processed_urls.json")
+    with open(output_file, "w") as f:
+        json.dump(results, f)
+
+    return {"status": "Completed", "file": output_file}
+
+# **📤 Upload Endpoint**
 @app.route("/upload", methods=["POST"])
 def upload_file():
-    if "file" not in request.files and "text_data" not in request.form:
-        return jsonify({"error": "No file or text data provided"}), 400
+    if "file" not in request.files:
+        return jsonify({"error": "No file part"}), 400
 
-    # ✅ Handle File Upload
-    if "file" in request.files:
-        file = request.files["file"]
-        if file.filename == "":
-            return jsonify({"error": "No selected file"}), 400
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
 
+    if file and allowed_file(file.filename):
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         file.save(filepath)
 
-        # 📌 Start Celery Background Task
-        task = process_urls.delay(filepath, "file")
+        # Read URLs from file
+        with open(filepath, "r") as f:
+            urls = [line.strip() for line in f if line.strip()]
+
+        # Start Celery task
+        task = process_urls.apply_async(args=[urls])
         return jsonify({"task_id": task.id}), 202
 
-    # ✅ Handle Copy-Paste Text Upload
-    elif "text_data" in request.form:
-        text_data = request.form["text_data"]
-        temp_filepath = os.path.join(app.config["UPLOAD_FOLDER"], "temp_urls.txt")
+    return jsonify({"error": "Invalid file type"}), 400
 
-        with open(temp_filepath, "w") as f:
-            f.write(text_data)
-
-        # 📌 Start Celery Background Task
-        task = process_urls.delay(temp_filepath, "text")
-        return jsonify({"task_id": task.id}), 202
-
-
-# 📌 Celery Task to Process URLs
-@celery.task(bind=True)
-def process_urls(self, filepath, source_type):
-    try:
-        urls = []
-        if source_type == "file":
-            with open(filepath, "r") as f:
-                urls = f.read().splitlines()
-        elif source_type == "text":
-            urls = filepath.split("\n")
-
-        # Simulate Processing (Replace with actual scraping logic)
-        results = [{"url": url, "status": "Processed"} for url in urls]
-
-        # ✅ Save GeoJSON Output
-        output_filename = "output.geojson"
-        output_path = os.path.join(app.config["UPLOAD_FOLDER"], output_filename)
-        with open(output_path, "w") as f:
-            json.dump(results, f)
-
-        return {"status": "Completed", "download_url": f"/download/{output_filename}"}
-
-    except Exception as e:
-        return {"status": "Failed", "error": str(e)}
-
-
-# 📌 Route to Check Task Status
-@app.route("/task-status/<task_id>")
+# **📊 Task Status**
+@app.route("/task-status/<task_id>", methods=["GET"])
 def task_status(task_id):
     task = process_urls.AsyncResult(task_id)
     if task.state == "PENDING":
-        response = {"status": "Processing"}
-    elif task.state == "SUCCESS":
-        response = task.result
+        response = {"state": task.state, "progress": 0}
+    elif task.state != "FAILURE":
+        response = {"state": task.state, "progress": task.info.get("current", 0) / task.info.get("total", 1) * 100}
     else:
-        response = {"status": "Failed", "error": str(task.info)}
+        response = {"state": "FAILED", "error": str(task.info)}
+
     return jsonify(response)
 
+# **📥 Download Processed File**
+@app.route("/download", methods=["GET"])
+def download_file():
+    filepath = os.path.join(UPLOAD_FOLDER, "processed_urls.json")
+    if os.path.exists(filepath):
+        return send_file(filepath, as_attachment=True)
+    return jsonify({"error": "File not found"}), 404
 
-# 📌 Route to Download Processed GeoJSON
-@app.route("/download/<filename>")
-def download_file(filename):
-    file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    return send_file(file_path, as_attachment=True)
-
+# **🌍 Home Route**
+@app.route("/")
+def home():
+    return render_template("index.html")
 
 if __name__ == "__main__":
     app.run(debug=True)
