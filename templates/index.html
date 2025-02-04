@@ -5,6 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Upload URLs</title>
     <script>
+        function uploadURLs() {
+            let textArea = document.getElementById("urlTextArea").value.trim();
+            let urls = textArea.split("\n").filter(url => url.trim() !== "");
+
+            if (urls.length === 0) {
+                alert("Please enter at least one URL.");
+                return;
+            }
+
+            fetch("/upload-text", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ urls: urls })
+            })
+            .then(response => response.json())
+            .then(data => trackProgress(data.task_id));
+        }
+
         function uploadFile() {
             let fileInput = document.getElementById("fileInput");
             let file = fileInput.files[0];
@@ -51,14 +69,29 @@
             width: 300px;
             margin: auto;
         }
+        textarea {
+            width: 80%;
+            height: 100px;
+            margin: 10px 0;
+        }
     </style>
 </head>
 <body>
-    <h2>Upload URLs</h2>
-    <input type="file" id="fileInput">
-    <button onclick="uploadFile()">Upload</button>
+    <h2>Upload Event URLs</h2>
+
+    <!-- Copy & Paste URLs -->
+    <textarea id="urlTextArea" placeholder="Paste URLs here, one per line"></textarea>
+    <button onclick="uploadURLs()">Upload URLs</button>
 
     <h3>OR</h3>
+
+    <!-- File Upload -->
+    <input type="file" id="fileInput">
+    <button onclick="uploadFile()">Upload File</button>
+
+    <h3>OR</h3>
+
+    <!-- Drag & Drop -->
     <div id="dropArea" ondrop="dropHandler(event)" ondragover="dragOverHandler(event)">
         Drag & Drop URL file here
     </div>
