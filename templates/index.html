@@ -3,55 +3,79 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upload URLs for Processing</title>
+    <title>Upload URLs</title>
     <script>
-        function uploadURLs() {
-            let urls = document.getElementById('urls').value.split("\n").map(url => url.trim()).filter(url => url);
-            if (urls.length === 0) {
-                alert("Please enter at least one URL.");
-                return;
-            }
+        function uploadFile() {
+            let fileInput = document.getElementById("fileInput");
+            let file = fileInput.files[0];
+            let formData = new FormData();
+            formData.append("file", file);
 
-            document.getElementById('progress').innerText = "Processing...";
-
-            fetch('/upload', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ urls: urls })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.task_id) {
-                    checkStatus(data.task_id);
-                } else {
-                    alert("Error: " + JSON.stringify(data));
-                }
-            });
+            fetch("/upload", { method: "POST", body: formData })
+                .then(response => response.json())
+                .then(data => trackProgress(data.task_id));
         }
 
-        function checkStatus(taskId) {
-            fetch(`/task-status/${taskId}`)
-            .then(response => response.json())
-            .then(data => {
-                if (data.state === "PROGRESS") {
-                    document.getElementById('progress').innerText = `Processing: ${data.progress.current} / ${data.progress.total}`;
-                    setTimeout(() => checkStatus(taskId), 2000);
-                } else if (data.state === "SUCCESS") {
-                    document.getElementById('progress').innerText = "Processing complete!";
-                    document.getElementById('download').innerHTML = `<a href="/download/${data.geojson_file.split('/').pop()}">Download GeoJSON</a>`;
-                } else {
-                    document.getElementById('progress').innerText = "Error or unknown status.";
-                }
-            });
+        function trackProgress(task_id) {
+            let progressBar = document.getElementById("progress");
+            let statusText = document.getElementById("status");
+
+            function updateStatus() {
+                fetch(`/task-status/${task_id}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.state === "PROGRESS") {
+                            progressBar.value = data.progress;
+                            setTimeout(updateStatus, 1000);
+                        } else if (data.state === "SUCCESS") {
+                            progressBar.value = 100;
+                            statusText.innerHTML = `<a href="${data.file_url}" download>Download GeoJSON</a>`;
+                        } else {
+                            statusText.textContent = "Processing failed!";
+                        }
+                    });
+            }
+            updateStatus();
         }
     </script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin-top: 50px;
+        }
+        #dropArea {
+            border: 2px dashed #ccc;
+            padding: 30px;
+            cursor: pointer;
+            width: 300px;
+            margin: auto;
+        }
+    </style>
 </head>
 <body>
-    <h2>Upload URLs for Processing</h2>
-    <textarea id="urls" rows="5" cols="50" placeholder="Enter URLs, one per line..."></textarea>
-    <br>
-    <button onclick="uploadURLs()">Upload & Process</button>
-    <p id="progress"></p>
-    <div id="download"></div>
+    <h2>Upload URLs</h2>
+    <input type="file" id="fileInput">
+    <button onclick="uploadFile()">Upload</button>
+
+    <h3>OR</h3>
+    <div id="dropArea" ondrop="dropHandler(event)" ondragover="dragOverHandler(event)">
+        Drag & Drop URL file here
+    </div>
+
+    <progress id="progress" value="0" max="100"></progress>
+    <p id="status"></p>
+
+    <script>
+        function dropHandler(event) {
+            event.preventDefault();
+            let file = event.dataTransfer.files[0];
+            document.getElementById("fileInput").files = event.dataTransfer.files;
+            uploadFile();
+        }
+        function dragOverHandler(event) {
+            event.preventDefault();
+        }
+    </script>
 </body>
 </html>
