@@ -2,120 +2,112 @@ import os
 import json
 import geojson
 import requests
-from flask import Flask, render_template, request, jsonify, send_file
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
+from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
+from celery import Celery
 from shapely.geometry import Point, Polygon
-from time import sleep
 
 app = Flask(__name__)
+CORS(app)  # Allow cross-origin requests
 
-# ✅ Get environment variables (set in Heroku)
-CHROMEDRIVER_PATH = os.getenv("CHROMEDRIVER_PATH", "/app/.chromedriver/bin/chromedriver")
-GOOGLE_CHROME_BIN = os.getenv("GOOGLE_CHROME_BIN", "/app/.chrome-for-testing/chrome-linux64/chrome")
-GMAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+# Celery Configuration for Redis (Heroku uses `REDIS_URL`)
+app.config["CELERY_BROKER_URL"] = os.getenv("REDIS_URL", "redis://localhost:6379")
+app.config["CELERY_RESULT_BACKEND"] = os.getenv("REDIS_URL", "redis://localhost:6379")
 
-chrome_options = Options()
-chrome_options.binary_location = GOOGLE_CHROME_BIN
-chrome_options.add_argument("--headless")
-chrome_options.add_argument("--disable-dev-shm-usage")
-chrome_options.add_argument("--no-sandbox")
+def make_celery(app):
+    celery = Celery(app.import_name, backend=app.config["CELERY_RESULT_BACKEND"], broker=app.config["CELERY_BROKER_URL"])
+    celery.conf.update(app.config)
+    return celery
 
-service = Service(CHROMEDRIVER_PATH)
+celery = make_celery(app)
 
-# ✅ Function to Scrape Event Details
-def scrape_event_details(url):
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    driver.get(url)
-    sleep(5)  # Allow time for JavaScript to load content
+# Google Maps API Key
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+if not GOOGLE_MAPS_API_KEY:
+    raise ValueError("Missing Google Maps API key. Set it in Heroku.")
 
-    venue_name, venue_address, event_date = None, None, None
-
-    try:
-        # 🔹 Modify these XPaths based on the event website structure
-        venue_name = driver.find_element("xpath", "//h1[contains(@class, 'venue-name')]").text.strip()
-        venue_address = driver.find_element("xpath", "//div[contains(@class, 'venue-address')]").text.strip()
-        event_date = driver.find_element("xpath", "//div[contains(@class, 'event-date')]").text.strip()
-
-        print(f"✅ Scraped: {venue_name}, {venue_address}, {event_date}")
-
-    except Exception as e:
-        print(f"❌ Scraping failed for {url}: {e}")
-
-    driver.quit()
-    return venue_name, venue_address, event_date
-
-# ✅ Function to Convert Address to Lat/Lon using Google Maps API
+# Function to get latitude & longitude from an address using Google Maps API
 def get_coordinates(address):
-    lat, lon = None, None
-    geocode_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={GMAPS_API_KEY}"
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={GOOGLE_MAPS_API_KEY}"
+    response = requests.get(url).json()
+    if response["status"] == "OK":
+        location = response["results"][0]["geometry"]["location"]
+        return location["lat"], location["lng"]
+    return None, None
 
-    try:
-        response = requests.get(geocode_url).json()
-        if response["status"] == "OK":
-            location = response["results"][0]["geometry"]["location"]
-            lat, lon = location["lat"], location["lng"]
-            print(f"✅ Geocoded: {lat}, {lon}")
-    except Exception as e:
-        print(f"❌ Google Maps API Error: {e}")
+# Function to scrape event details from a given URL
+def scrape_event_details(url):
+    # This function should be updated based on the website structure being scraped
+    # Dummy implementation returning placeholders
+    return "Sample Venue", "123 Main St, New York, NY", "2025-12-01"
 
-    return lat, lon
-
-# ✅ Function to Create a Polygon Around the Venue
+# Function to create a polygon (dummy example)
 def create_venue_polygon(lat, lon):
-    buffer_distance = 0.001  # ~100 meters
+    size = 0.001  # Approx. 100m square
     return Polygon([
-        (lon - buffer_distance, lat - buffer_distance),
-        (lon - buffer_distance, lat + buffer_distance),
-        (lon + buffer_distance, lat + buffer_distance),
-        (lon + buffer_distance, lat - buffer_distance),
-        (lon - buffer_distance, lat - buffer_distance)
+        (lon - size, lat - size),
+        (lon + size, lat - size),
+        (lon + size, lat + size),
+        (lon - size, lat + size),
+        (lon - size, lat - size)
     ])
 
-# ✅ API Endpoint for Processing Uploaded URLs
-@app.route('/process-urls', methods=['POST'])
-def process_urls():
-    data = request.get_json()
-    urls = data.get("urls", [])
-    geojson_features = []
-
+# Celery Task for Processing URLs
+@celery.task
+def process_urls_task(urls):
+    results = []
     for url in urls:
         venue_name, venue_address, event_date = scrape_event_details(url)
         if venue_address:
             lat, lon = get_coordinates(venue_address)
             if lat and lon:
                 venue_polygon = create_venue_polygon(lat, lon)
-                feature = geojson.Feature(
-                    geometry=venue_polygon,
-                    properties={
-                        "venue_name": venue_name,
-                        "venue_address": venue_address,
-                        "latitude": lat,
-                        "longitude": lon,
-                        "event_date": event_date
-                    }
+                results.append(
+                    geojson.Feature(
+                        geometry=venue_polygon,
+                        properties={
+                            "venue_name": venue_name,
+                            "venue_address": venue_address,
+                            "latitude": lat,
+                            "longitude": lon,
+                            "event_date": event_date
+                        }
+                    )
                 )
-                geojson_features.append(feature)
 
-    if not geojson_features:
-        return jsonify({"error": "No valid locations found"}), 400
+    geojson_data = geojson.FeatureCollection(results)
 
-    geojson_data = geojson.FeatureCollection(geojson_features)
-    with open("event_venues.geojson", "w") as f:
+    # Save GeoJSON File
+    geojson_file = "event_venues.geojson"
+    with open(geojson_file, "w") as f:
         json.dump(geojson_data, f)
 
-    return jsonify({"message": "GeoJSON file created", "file": "/download-geojson"}), 200
+    return geojson_file  # Return filename
 
-# ✅ API Endpoint to Download GeoJSON
-@app.route('/download-geojson')
+# API Route to Process URLs (Async)
+@app.route('/process-urls', methods=['POST'])
+def process_urls():
+    data = request.get_json()
+    urls = data.get("urls", [])
+
+    # Offload processing to Celery
+    task = process_urls_task.apply_async(args=[urls])
+
+    return jsonify({"message": "Processing started", "task_id": task.id}), 202
+
+# API Route to Check Task Status
+@app.route('/task-status/<task_id>', methods=['GET'])
+def task_status(task_id):
+    task = process_urls_task.AsyncResult(task_id)
+    return jsonify({"status": task.status, "result": task.result})
+
+# API Route to Download GeoJSON
+@app.route('/download-geojson', methods=['GET'])
 def download_geojson():
-    return send_file("event_venues.geojson", as_attachment=True)
-
-# ✅ Load HTML Upload Page
-@app.route('/')
-def index():
-    return render_template("index.html")
+    geojson_file = "event_venues.geojson"
+    if os.path.exists(geojson_file):
+        return send_file(geojson_file, as_attachment=True)
+    return jsonify({"error": "GeoJSON file not found"}), 404
 
 if __name__ == "__main__":
     app.run(debug=True)
