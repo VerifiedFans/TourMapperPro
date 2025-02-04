@@ -1,113 +1,79 @@
 import os
+import time
 import json
-import geojson
-import requests
-from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
+from flask import Flask, render_template, request, jsonify, send_file
 from celery import Celery
-from shapely.geometry import Point, Polygon
 
+# Initialize Flask app
 app = Flask(__name__)
-CORS(app)  # Allow cross-origin requests
 
-# Celery Configuration for Redis (Heroku uses `REDIS_URL`)
-app.config["CELERY_BROKER_URL"] = os.getenv("REDIS_URL", "redis://localhost:6379")
-app.config["CELERY_RESULT_BACKEND"] = os.getenv("REDIS_URL", "redis://localhost:6379")
+# Redis & Celery Configuration
+app.config['CELERY_BROKER_URL'] = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+app.config['CELERY_RESULT_BACKEND'] = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
 
-def make_celery(app):
-    celery = Celery(app.import_name, backend=app.config["CELERY_RESULT_BACKEND"], broker=app.config["CELERY_BROKER_URL"])
-    celery.conf.update(app.config)
-    return celery
+# Initialize Celery
+celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
+celery.conf.update(app.config)
 
-celery = make_celery(app)
+# Folder for processed files
+UPLOAD_FOLDER = 'processed_files'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Google Maps API Key
-GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
-if not GOOGLE_MAPS_API_KEY:
-    raise ValueError("Missing Google Maps API key. Set it in Heroku.")
+@app.route('/')
+def home():
+    return render_template('index.html')
 
-# Function to get latitude & longitude from an address using Google Maps API
-def get_coordinates(address):
-    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={GOOGLE_MAPS_API_KEY}"
-    response = requests.get(url).json()
-    if response["status"] == "OK":
-        location = response["results"][0]["geometry"]["location"]
-        return location["lat"], location["lng"]
-    return None, None
-
-# Function to scrape event details from a given URL
-def scrape_event_details(url):
-    # This function should be updated based on the website structure being scraped
-    # Dummy implementation returning placeholders
-    return "Sample Venue", "123 Main St, New York, NY", "2025-12-01"
-
-# Function to create a polygon (dummy example)
-def create_venue_polygon(lat, lon):
-    size = 0.001  # Approx. 100m square
-    return Polygon([
-        (lon - size, lat - size),
-        (lon + size, lat - size),
-        (lon + size, lat + size),
-        (lon - size, lat + size),
-        (lon - size, lat - size)
-    ])
-
-# Celery Task for Processing URLs
-@celery.task
-def process_urls_task(urls):
+@celery.task(bind=True)
+def process_urls(self, urls):
+    """Simulate scraping URLs and generating a GeoJSON file"""
     results = []
-    for url in urls:
-        venue_name, venue_address, event_date = scrape_event_details(url)
-        if venue_address:
-            lat, lon = get_coordinates(venue_address)
-            if lat and lon:
-                venue_polygon = create_venue_polygon(lat, lon)
-                results.append(
-                    geojson.Feature(
-                        geometry=venue_polygon,
-                        properties={
-                            "venue_name": venue_name,
-                            "venue_address": venue_address,
-                            "latitude": lat,
-                            "longitude": lon,
-                            "event_date": event_date
-                        }
-                    )
-                )
+    
+    for i, url in enumerate(urls):
+        time.sleep(2)  # Simulating processing delay
+        results.append({"url": url, "status": "Processed", "lat": 40.7128, "lon": -74.0060})
+        self.update_state(state='PROGRESS', meta={'current': i + 1, 'total': len(urls)})
 
-    geojson_data = geojson.FeatureCollection(results)
+    # Save results as GeoJSON
+    geojson_data = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"url": entry["url"]},
+                "geometry": {"type": "Point", "coordinates": [entry["lon"], entry["lat"]]},
+            }
+            for entry in results
+        ],
+    }
 
-    # Save GeoJSON File
-    geojson_file = "event_venues.geojson"
-    with open(geojson_file, "w") as f:
-        json.dump(geojson_data, f)
+    geojson_filename = os.path.join(UPLOAD_FOLDER, f"processed_{int(time.time())}.geojson")
+    with open(geojson_filename, "w") as geojson_file:
+        json.dump(geojson_data, geojson_file)
 
-    return geojson_file  # Return filename
+    return {"status": "Completed", "geojson_file": geojson_filename}
 
-# API Route to Process URLs (Async)
-@app.route('/process-urls', methods=['POST'])
-def process_urls():
-    data = request.get_json()
-    urls = data.get("urls", [])
+@app.route('/upload', methods=['POST'])
+def upload():
+    urls = request.json.get('urls', [])
+    if not urls:
+        return jsonify({"error": "No URLs provided"}), 400
 
-    # Offload processing to Celery
-    task = process_urls_task.apply_async(args=[urls])
+    task = process_urls.apply_async(args=[urls])
+    return jsonify({"task_id": task.id, "status": "Processing"}), 202
 
-    return jsonify({"message": "Processing started", "task_id": task.id}), 202
-
-# API Route to Check Task Status
-@app.route('/task-status/<task_id>', methods=['GET'])
+@app.route('/task-status/<task_id>')
 def task_status(task_id):
-    task = process_urls_task.AsyncResult(task_id)
-    return jsonify({"status": task.status, "result": task.result})
+    task = process_urls.AsyncResult(task_id)
+    if task.state == 'PROGRESS':
+        return jsonify({"state": task.state, "progress": task.info})
+    elif task.state == 'SUCCESS':
+        return jsonify({"state": task.state, "geojson_file": task.result["geojson_file"]})
+    else:
+        return jsonify({"state": task.state})
 
-# API Route to Download GeoJSON
-@app.route('/download-geojson', methods=['GET'])
-def download_geojson():
-    geojson_file = "event_venues.geojson"
-    if os.path.exists(geojson_file):
-        return send_file(geojson_file, as_attachment=True)
-    return jsonify({"error": "GeoJSON file not found"}), 404
+@app.route('/download/<filename>')
+def download(filename):
+    return send_file(os.path.join(UPLOAD_FOLDER, filename), as_attachment=True)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(debug=True)
