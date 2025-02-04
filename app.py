@@ -1,4 +1,3 @@
-
 import os
 import time
 import json
@@ -7,8 +6,8 @@ import requests
 from flask import Flask, render_template, request, jsonify, send_file
 from flask_cors import CORS
 from celery import Celery
-from kombu import Exchange, Queue
 from werkzeug.utils import secure_filename
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 CORS(app)
@@ -24,12 +23,11 @@ celery.conf.update(
     accept_content=["json"],
     result_serializer="json",
     broker_transport_options={"visibility_timeout": 3600},
-    task_queues=(Queue("default", Exchange("default"), routing_key="default"),),
 )
 
 # ✅ Ensure Redis is working
 try:
-    redis_client = redis.from_url(CELERY_BROKER_URL)
+    redis_client = redis.from_url(CELERY_BROKER_URL, decode_responses=True)
     redis_client.ping()
     print("✅ Redis Connected Successfully!")
 except redis.ConnectionError:
@@ -44,6 +42,32 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
+# ✅ Web Scraper Function
+def scrape_event_data(url):
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            return {"url": url, "error": f"HTTP {response.status_code}"}
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        venue_name = soup.find(text=lambda t: "Performing Arts Center" in t or "Theater" in t)
+        address = soup.find(text=lambda t: any(x in t for x in [" Rd", " St", " Ave", " Blvd"]))
+        city_state_zip = soup.find(text=lambda t: "," in t and len(t.split(",")) == 2)
+
+        date = soup.find(text=lambda t: any(month in t for month in 
+                   ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]))
+
+        return {
+            "url": url,
+            "venue": venue_name.strip() if venue_name else "Not Found",
+            "address": address.strip() if address else "Not Found",
+            "city_state_zip": city_state_zip.strip() if city_state_zip else "Not Found",
+            "date": date.strip() if date else "Not Found"
+        }
+    except requests.exceptions.RequestException as e:
+        return {"url": url, "error": str(e)}
+
 # ✅ Celery Task
 @celery.task(bind=True)
 def process_urls(self, urls):
@@ -52,12 +76,7 @@ def process_urls(self, urls):
 
     results = []
     for index, url in enumerate(urls):
-        try:
-            response = requests.get(url, timeout=5)
-            results.append({"url": url, "status": response.status_code, "content_length": len(response.text)})
-        except requests.exceptions.RequestException as e:
-            results.append({"url": url, "error": str(e)})
-
+        results.append(scrape_event_data(url))
         self.update_state(state="PROGRESS", meta={"current": index + 1, "total": len(urls)})
         time.sleep(1)
 
