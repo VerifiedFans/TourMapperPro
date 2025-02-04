@@ -3,69 +3,76 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TourMapper Pro - Event Scraper</title>
+    <title>TourMapper Pro</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-            background-color: #f4f4f4;
-        }
-        .container {
-            margin: 50px auto;
-            padding: 20px;
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
-            width: 50%;
-        }
-        textarea, input, button {
-            width: 80%;
-            padding: 10px;
-            margin: 10px;
-        }
-        #dropZone {
-            border: 2px dashed #007BFF;
-            padding: 20px;
-            cursor: pointer;
-            color: #007BFF;
-            margin-bottom: 10px;
-        }
+        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+        #progressContainer { display: none; margin-top: 10px; }
+        #progressBar { width: 0%; height: 20px; background: green; }
     </style>
+</head>
+<body>
+
+    <h2>Upload URLs for Scraping</h2>
+    <textarea id="urlInput" rows="5" cols="50" placeholder="Paste URLs here..."></textarea><br>
+    <button onclick="uploadUrls()">Upload & Start Scraping</button>
+
+    <!-- Progress Bar -->
+    <div id="progressContainer">
+        <p>Scraping Progress:</p>
+        <div style="width: 100%; background: #ddd;">
+            <div id="progressBar"></div>
+        </div>
+    </div>
+
+    <!-- Download Button -->
+    <div id="downloadContainer" style="display:none; margin-top: 20px;">
+        <a id="downloadLink" href="#" download="events.geojson">
+            <button>Download GeoJSON</button>
+        </a>
+    </div>
+
     <script>
-        function processURLs() {
-            let urls = document.getElementById("eventUrls").value.split("\n").map(url => url.trim()).filter(url => url);
-            if (urls.length === 0) {
-                alert("Please enter URLs.");
+        function uploadUrls() {
+            let urls = document.getElementById("urlInput").value.trim().split("\n");
+            if (urls.length === 0 || urls[0] === "") {
+                alert("Please enter at least one URL.");
                 return;
             }
+
+            document.getElementById("progressContainer").style.display = "block";
+            document.getElementById("downloadContainer").style.display = "none"; // Hide download initially
+            let progressBar = document.getElementById("progressBar");
+            progressBar.style.width = "0%";
 
             fetch("/process-urls", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ urls: urls }),
+                body: JSON.stringify({ urls })
             })
             .then(response => response.json())
             .then(data => {
-                if (data.file) {
-                    document.getElementById("downloadLink").href = data.file;
-                    document.getElementById("downloadLink").style.display = "block";
-                    alert("GeoJSON created!");
-                } else {
-                    alert("Error: " + data.error);
+                let total = data.urls.length;
+                let completed = 0;
+
+                function updateProgress() {
+                    completed++;
+                    let progress = (completed / total) * 100;
+                    progressBar.style.width = progress + "%";
+
+                    if (completed >= total) {
+                        alert("Scraping Complete!");
+                        document.getElementById("downloadContainer").style.display = "block";
+                        document.getElementById("downloadLink").href = data.download_url;
+                    }
                 }
-            });
+
+                data.urls.forEach((url, index) => {
+                    setTimeout(updateProgress, index * 1000);
+                });
+            })
+            .catch(error => alert("Upload Failed: " + error));
         }
     </script>
-</head>
-<body>
-    <div class="container">
-        <h1>Event Scraper</h1>
-        <p>Paste URLs, upload a file, or drag & drop</p>
-        <textarea id="eventUrls" placeholder="Enter event URLs here..." rows="5"></textarea>
-        <br>
-        <button onclick="processURLs()">Scrape & Generate GeoJSON</button>
-        <br><br>
-        <a id="downloadLink" href="#" style="display:none;" download="events.geojson">Download GeoJSON</a>
-    </div>
+
 </body>
 </html>
