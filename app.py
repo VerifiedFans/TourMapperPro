@@ -11,9 +11,10 @@ from time import sleep
 
 app = Flask(__name__)
 
-# ✅ Set Google Chrome & Chromedriver paths from Heroku environment
+# ✅ Heroku Environment Variables
 CHROMEDRIVER_PATH = os.getenv("CHROMEDRIVER_PATH", "/app/.chromedriver/bin/chromedriver")
 GOOGLE_CHROME_BIN = os.getenv("GOOGLE_CHROME_BIN", "/app/.chrome-for-testing/chrome-linux64/chrome")
+GMAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
 chrome_options = Options()
 chrome_options.binary_location = GOOGLE_CHROME_BIN
@@ -23,47 +24,56 @@ chrome_options.add_argument("--no-sandbox")
 
 service = Service(CHROMEDRIVER_PATH)
 
-# ✅ Function to extract latitude & longitude from event URL
-def get_event_location(url):
+# ✅ Function to Extract Event Details from URL
+def scrape_event_details(url):
     driver = webdriver.Chrome(service=service, options=chrome_options)
     driver.get(url)
-    sleep(3)  # Let page load
+    sleep(5)  # Let JavaScript elements load
 
-    # Example: Modify XPath based on actual website structure
+    venue_name, venue_address, event_date = None, None, None
+
     try:
-        venue_address = driver.find_element("xpath", "//div[@class='venue-address']").text
+        # 🛠 Modify based on actual website HTML structure
+        venue_name = driver.find_element("xpath", "//h1[@class='venue-name']").text.strip()
+        venue_address = driver.find_element("xpath", "//div[@class='venue-address']").text.strip()
+        event_date = driver.find_element("xpath", "//div[@class='event-date']").text.strip()
+
+        print(f"✅ Scraped Data: {venue_name}, {venue_address}, {event_date}")
+
     except Exception as e:
-        print("Could not find address:", e)
-        driver.quit()
-        return None, None, None
+        print(f"❌ Error scraping {url}: {e}")
 
     driver.quit()
+    return venue_name, venue_address, event_date
 
-    # Convert address to latitude & longitude using Google Maps API
-    GMAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
-    geocode_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={venue_address}&key={GMAPS_API_KEY}"
-    response = requests.get(geocode_url).json()
+# ✅ Function to Get Lat/Lon from Google Maps API
+def get_coordinates(address):
+    lat, lon = None, None
+    geocode_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={GMAPS_API_KEY}"
 
-    if response["status"] == "OK":
-        location = response["results"][0]["geometry"]["location"]
-        lat, lon = location["lat"], location["lng"]
-        return lat, lon, venue_address
-    else:
-        return None, None, None
+    try:
+        response = requests.get(geocode_url).json()
+        if response["status"] == "OK":
+            location = response["results"][0]["geometry"]["location"]
+            lat, lon = location["lat"], location["lng"]
+            print(f"✅ Geocoded: {lat}, {lon}")
+    except Exception as e:
+        print(f"❌ Google Maps API Error: {e}")
 
-# ✅ Function to create a bounding polygon for venue
+    return lat, lon
+
+# ✅ Function to Draw Polygon for Venue & Parking
 def create_venue_polygon(lat, lon):
     buffer_distance = 0.001  # Adjust for size (~100m)
-    venue_polygon = Polygon([
+    return Polygon([
         (lon - buffer_distance, lat - buffer_distance),
         (lon - buffer_distance, lat + buffer_distance),
         (lon + buffer_distance, lat + buffer_distance),
         (lon + buffer_distance, lat - buffer_distance),
         (lon - buffer_distance, lat - buffer_distance)
     ])
-    return venue_polygon
 
-# ✅ API Endpoint to handle uploaded URLs
+# ✅ API Endpoint for Uploading Event URLs
 @app.route('/process-urls', methods=['POST'])
 def process_urls():
     data = request.get_json()
@@ -71,33 +81,38 @@ def process_urls():
     geojson_features = []
 
     for url in urls:
-        lat, lon, venue_address = get_event_location(url)
+        venue_name, venue_address, event_date = scrape_event_details(url)
+        if venue_address:
+            lat, lon = get_coordinates(venue_address)
+            if lat and lon:
+                venue_polygon = create_venue_polygon(lat, lon)
+                feature = geojson.Feature(
+                    geometry=venue_polygon,
+                    properties={
+                        "venue_name": venue_name,
+                        "venue_address": venue_address,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "event_date": event_date
+                    }
+                )
+                geojson_features.append(feature)
 
-        if lat and lon:
-            venue_polygon = create_venue_polygon(lat, lon)
-            feature = geojson.Feature(
-                geometry=venue_polygon,
-                properties={
-                    "venue_address": venue_address,
-                    "latitude": lat,
-                    "longitude": lon
-                }
-            )
-            geojson_features.append(feature)
+    if not geojson_features:
+        return jsonify({"error": "No valid locations found"}), 400
 
     geojson_data = geojson.FeatureCollection(geojson_features)
-    
-    with open("venue_data.geojson", "w") as f:
+    with open("event_venues.geojson", "w") as f:
         json.dump(geojson_data, f)
 
     return jsonify({"message": "GeoJSON file created", "file": "/download-geojson"}), 200
 
-# ✅ Download GeoJSON file
+# ✅ API Endpoint to Download GeoJSON
 @app.route('/download-geojson')
 def download_geojson():
-    return send_file("venue_data.geojson", as_attachment=True)
+    return send_file("event_venues.geojson", as_attachment=True)
 
-# ✅ Render HTML Upload Page
+# ✅ Load HTML Upload Page
 @app.route('/')
 def index():
     return render_template("index.html")
