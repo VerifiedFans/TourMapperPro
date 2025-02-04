@@ -13,3 +13,4 @@ geopy
 pipfreeze
 webdriver-manager==4.0.1
 shapely
+geopandas
