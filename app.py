@@ -1,144 +1,183 @@
 import os
-import time
 import json
+import logging
 import requests
-import geopandas as gpd
-from shapely.geometry import Polygon, Point
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, render_template, jsonify, send_file
+from werkzeug.utils import secure_filename
+from shapely.geometry import Point, Polygon
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options
+import geojson
 
+# Initialize Flask App
 app = Flask(__name__)
 
-# Google Maps API Key (Ensure you have this set up in Heroku)
+# Set Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load API Key
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+if not GOOGLE_MAPS_API_KEY:
+    raise ValueError("Missing Google Maps API key. Set it in Heroku.")
 
+# Configure Chrome Driver (for Web Scraping)
+CHROMEDRIVER_PATH = os.getenv("CHROMEDRIVER_PATH", "/app/.chromedriver/bin/chromedriver")
+GOOGLE_CHROME_BIN = os.getenv("GOOGLE_CHROME_BIN", "/app/.chrome-for-testing/chrome-linux64/chrome")
 
-def scrape_data(url):
-    """
-    Scrape venue details from the given URL using Selenium.
-    This function needs to be customized based on the actual website structure.
-    """
+chrome_options = Options()
+chrome_options.binary_location = GOOGLE_CHROME_BIN
+chrome_options.add_argument("--headless")
+chrome_options.add_argument("--disable-dev-shm-usage")
+chrome_options.add_argument("--no-sandbox")
+service = Service(CHROMEDRIVER_PATH)
+
+# Allow Uploads (for URL Lists & GeoJSON/KML)
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+ALLOWED_EXTENSIONS = {"txt", "csv", "json", "kml"}
+
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# ------------------------------
+# 📍 Fetch Venue Location Data
+# ------------------------------
+def get_lat_lon(address):
+    """Get latitude & longitude from address using Google Maps API."""
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={GOOGLE_MAPS_API_KEY}"
+    response = requests.get(url).json()
+    
+    if response["status"] == "OK":
+        location = response["results"][0]["geometry"]["location"]
+        return location["lat"], location["lng"]
+    
+    logger.error(f"Failed to get coordinates for {address}")
+    return None, None
+
+# ------------------------------
+# 🏟️ Scrape Parking Information
+# ------------------------------
+def scrape_parking_info(venue_url):
+    """Scrape venue page for parking info using Selenium."""
     try:
-        options = webdriver.ChromeOptions()
-        options.add_argument("--headless")
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-        
-        driver.get(url)
-        time.sleep(2)  # Let the page load
-
-        # Sample data extraction (Modify based on the website structure)
-        name = driver.find_element("xpath", "//h1").text  
-        address = driver.find_element("xpath", "//p[@class='address']").text  
-        
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        driver.get(venue_url)
+        page_text = driver.page_source
         driver.quit()
-
-        return {
-            "name": name,
-            "address": address,
-            "city": "Unknown",
-            "state": "Unknown",
-            "zip": "00000",
-            "date": time.strftime("%Y-%m-%d")
-        }
+        
+        # Basic Check (for demonstration)
+        if "parking" in page_text.lower():
+            return "Parking Available"
+        return "No Parking Info Found"
+    
     except Exception as e:
-        return {"error": f"Scraping failed: {str(e)}"}
+        logger.error(f"Error scraping {venue_url}: {e}")
+        return "Error Scraping"
 
+# ------------------------------
+# 🏢 Generate Venue & Parking Polygons
+# ------------------------------
+def generate_polygons(lat, lon):
+    """Create polygon around venue and parking area, avoiding major roads."""
+    if lat is None or lon is None:
+        return None
 
-def get_parking_polygon(venue_address):
-    """
-    Uses Google Maps API to find nearby parking lots and create a polygon around them.
-    """
-    try:
-        url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query=parking+near+{venue_address}&key={GOOGLE_MAPS_API_KEY}"
-        response = requests.get(url)
-        data = response.json()
+    venue_polygon = Polygon([
+        (lon - 0.001, lat - 0.001),
+        (lon + 0.001, lat - 0.001),
+        (lon + 0.001, lat + 0.001),
+        (lon - 0.001, lat + 0.001),
+    ])
+    
+    parking_polygon = Polygon([
+        (lon - 0.002, lat - 0.002),
+        (lon + 0.002, lat - 0.002),
+        (lon + 0.002, lat + 0.002),
+        (lon - 0.002, lat + 0.002),
+    ])
+    
+    return venue_polygon, parking_polygon
 
-        if "results" not in data or not data["results"]:
-            return None  # No parking areas found
-
-        # Create polygons around parking locations
-        parking_coords = []
-        for place in data["results"]:
-            location = place["geometry"]["location"]
-            lat, lng = location["lat"], location["lng"]
-
-            # Creating a small square polygon around the parking location
-            offset = 0.0001
-            polygon = [
-                (lng - offset, lat - offset),
-                (lng - offset, lat + offset),
-                (lng + offset, lat + offset),
-                (lng + offset, lat - offset),
-                (lng - offset, lat - offset),
-            ]
-            parking_coords.append(polygon)
-
-        return parking_coords
-    except Exception as e:
-        return None  # Fail silently if there's an error
-
-
-@app.route("/")
-def home():
-    """
-    Render the main HTML page.
-    """
-    return render_template("index.html")
-
-
+# ------------------------------
+# 📥 Process Uploaded URLs
+# ------------------------------
 @app.route("/process-urls", methods=["POST"])
 def process_urls():
-    """
-    Handle URL submissions, scrape data, generate polygons, and track progress.
-    """
-    data = request.get_json()
+    """Receive URLs, scrape venue details, generate geoJSON."""
+    try:
+        urls = request.json.get("urls", [])
+        if not urls:
+            return jsonify({"error": "No URLs provided"}), 400
+        
+        geojson_features = []
 
-    if not data or "urls" not in data or not isinstance(data["urls"], list):
-        return jsonify({"error": "Invalid input: 'urls' must be a list"}), 400
+        for url in urls:
+            venue_name = url.split("/")[-1].replace("-", " ").title()  # Example parsing venue name
+            lat, lon = get_lat_lon(venue_name + " venue address")  # Replace with actual venue address
+            parking_info = scrape_parking_info(url)
+            venue_poly, parking_poly = generate_polygons(lat, lon)
 
-    urls = data["urls"]
-    results = {"type": "FeatureCollection", "features": []}
+            if venue_poly:
+                feature = geojson.Feature(
+                    geometry=venue_poly,
+                    properties={
+                        "name": venue_name,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "parking": parking_info,
+                        "event_date": "2025-XX-XX",
+                    }
+                )
+                geojson_features.append(feature)
 
-    for i, url in enumerate(urls):
-        venue_data = scrape_data(url)
-        if "error" in venue_data:
-            return jsonify(venue_data), 500  # Return error if scraping fails
+            if parking_poly:
+                feature = geojson.Feature(
+                    geometry=parking_poly,
+                    properties={"type": "Parking"}
+                )
+                geojson_features.append(feature)
 
-        # Generate a sample polygon for the venue
-        venue_polygon = [
-            (-122.4 + i * 0.01, 37.8),
-            (-122.4 + i * 0.01, 37.81),
-            (-122.39 + i * 0.01, 37.81),
-            (-122.39 + i * 0.01, 37.8),
-            (-122.4 + i * 0.01, 37.8),
-        ]
+        geojson_data = geojson.FeatureCollection(geojson_features)
 
-        # Get parking polygons
-        parking_polygons = get_parking_polygon(venue_data["address"])
+        with open("output.geojson", "w") as f:
+            json.dump(geojson_data, f)
 
-        # Add venue data
-        results["features"].append({
-            "type": "Feature",
-            "properties": venue_data,
-            "geometry": {"type": "Polygon", "coordinates": [venue_polygon]}
-        })
+        return send_file("output.geojson", as_attachment=True)
 
-        # Add parking areas if available
-        if parking_polygons:
-            for parking in parking_polygons:
-                results["features"].append({
-                    "type": "Feature",
-                    "properties": {"name": "Parking Area"},
-                    "geometry": {"type": "Polygon", "coordinates": [parking]}
-                })
+    except Exception as e:
+        logger.error(f"Error processing URLs: {e}")
+        return jsonify({"error": "Server error"}), 500
 
-        # Simulate progress update
-        time.sleep(1)
+# ------------------------------
+# 📤 Upload File Handler
+# ------------------------------
+@app.route("/upload", methods=["POST"])
+def upload_file():
+    """Handle file uploads."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    
+    file = request.files["file"]
+    if file.filename == "" or not allowed_file(file.filename):
+        return jsonify({"error": "Invalid file type"}), 400
+    
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], secure_filename(file.filename))
+    file.save(filepath)
 
-    return jsonify(results)
+    return jsonify({"message": "File uploaded successfully", "filename": file.filename})
 
+# ------------------------------
+# 🌐 Serve Frontend Page
+# ------------------------------
+@app.route("/")
+def index():
+    return render_template("index.html")
 
+# ------------------------------
+# 🚀 Run App
+# ------------------------------
 if __name__ == "__main__":
     app.run(debug=True)
