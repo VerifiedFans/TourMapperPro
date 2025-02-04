@@ -11,7 +11,7 @@ from time import sleep
 
 app = Flask(__name__)
 
-# ✅ Heroku Environment Variables
+# ✅ Get environment variables (set in Heroku)
 CHROMEDRIVER_PATH = os.getenv("CHROMEDRIVER_PATH", "/app/.chromedriver/bin/chromedriver")
 GOOGLE_CHROME_BIN = os.getenv("GOOGLE_CHROME_BIN", "/app/.chrome-for-testing/chrome-linux64/chrome")
 GMAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -24,29 +24,29 @@ chrome_options.add_argument("--no-sandbox")
 
 service = Service(CHROMEDRIVER_PATH)
 
-# ✅ Function to Extract Event Details from URL
+# ✅ Function to Scrape Event Details
 def scrape_event_details(url):
     driver = webdriver.Chrome(service=service, options=chrome_options)
     driver.get(url)
-    sleep(5)  # Let JavaScript elements load
+    sleep(5)  # Allow time for JavaScript to load content
 
     venue_name, venue_address, event_date = None, None, None
 
     try:
-        # 🛠 Modify based on actual website HTML structure
-        venue_name = driver.find_element("xpath", "//h1[@class='venue-name']").text.strip()
-        venue_address = driver.find_element("xpath", "//div[@class='venue-address']").text.strip()
-        event_date = driver.find_element("xpath", "//div[@class='event-date']").text.strip()
+        # 🔹 Modify these XPaths based on the event website structure
+        venue_name = driver.find_element("xpath", "//h1[contains(@class, 'venue-name')]").text.strip()
+        venue_address = driver.find_element("xpath", "//div[contains(@class, 'venue-address')]").text.strip()
+        event_date = driver.find_element("xpath", "//div[contains(@class, 'event-date')]").text.strip()
 
-        print(f"✅ Scraped Data: {venue_name}, {venue_address}, {event_date}")
+        print(f"✅ Scraped: {venue_name}, {venue_address}, {event_date}")
 
     except Exception as e:
-        print(f"❌ Error scraping {url}: {e}")
+        print(f"❌ Scraping failed for {url}: {e}")
 
     driver.quit()
     return venue_name, venue_address, event_date
 
-# ✅ Function to Get Lat/Lon from Google Maps API
+# ✅ Function to Convert Address to Lat/Lon using Google Maps API
 def get_coordinates(address):
     lat, lon = None, None
     geocode_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={GMAPS_API_KEY}"
@@ -62,9 +62,9 @@ def get_coordinates(address):
 
     return lat, lon
 
-# ✅ Function to Draw Polygon for Venue & Parking
+# ✅ Function to Create a Polygon Around the Venue
 def create_venue_polygon(lat, lon):
-    buffer_distance = 0.001  # Adjust for size (~100m)
+    buffer_distance = 0.001  # ~100 meters
     return Polygon([
         (lon - buffer_distance, lat - buffer_distance),
         (lon - buffer_distance, lat + buffer_distance),
@@ -73,7 +73,7 @@ def create_venue_polygon(lat, lon):
         (lon - buffer_distance, lat - buffer_distance)
     ])
 
-# ✅ API Endpoint for Uploading Event URLs
+# ✅ API Endpoint for Processing Uploaded URLs
 @app.route('/process-urls', methods=['POST'])
 def process_urls():
     data = request.get_json()
