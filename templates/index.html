@@ -4,15 +4,42 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro - Event Scraper</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f4f4f4;
+        }
+        .container {
+            margin: 50px auto;
+            padding: 20px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+            width: 50%;
+        }
+        textarea, input, button {
+            width: 80%;
+            padding: 10px;
+            margin: 10px;
+        }
+        #dropZone {
+            border: 2px dashed #007BFF;
+            padding: 20px;
+            cursor: pointer;
+            color: #007BFF;
+            margin-bottom: 10px;
+        }
+    </style>
     <script>
-        function scrapeEvents() {
+        function processURLs() {
             let urls = document.getElementById("eventUrls").value.split("\n").map(url => url.trim()).filter(url => url);
             if (urls.length === 0) {
-                alert("Please enter at least one event URL.");
+                alert("Please enter URLs.");
                 return;
             }
 
-            fetch("/scrape-events", {
+            fetch("/process-urls", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ urls: urls }),
@@ -22,24 +49,23 @@
                 if (data.file) {
                     document.getElementById("downloadLink").href = data.file;
                     document.getElementById("downloadLink").style.display = "block";
-                    alert("GeoJSON created! Click the download link.");
+                    alert("GeoJSON created!");
                 } else {
                     alert("Error: " + data.error);
                 }
-            })
-            .catch(error => console.error("Error:", error));
+            });
         }
     </script>
 </head>
 <body>
-    <h1>Event Scraper</h1>
-    <p>Enter event URLs, one per line:</p>
-
-    <textarea id="eventUrls" placeholder="Enter event URLs here..." rows="5" cols="50"></textarea>
-    <br>
-    <button onclick="scrapeEvents()">Scrape & Generate GeoJSON</button>
-    
-    <br><br>
-    <a id="downloadLink" href="#" style="display:none;" download="events.geojson">Download GeoJSON</a>
+    <div class="container">
+        <h1>Event Scraper</h1>
+        <p>Paste URLs, upload a file, or drag & drop</p>
+        <textarea id="eventUrls" placeholder="Enter event URLs here..." rows="5"></textarea>
+        <br>
+        <button onclick="processURLs()">Scrape & Generate GeoJSON</button>
+        <br><br>
+        <a id="downloadLink" href="#" style="display:none;" download="events.geojson">Download GeoJSON</a>
+    </div>
 </body>
 </html>
