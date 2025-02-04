@@ -12,3 +12,4 @@ keyring==23.13.1
 geopy
 pipfreeze
 webdriver-manager==4.0.1
+shapely
