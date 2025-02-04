@@ -1,125 +1,144 @@
-from flask import Flask, render_template, request, jsonify, send_file
-import json
 import os
 import time
+import json
 import requests
-from bs4 import BeautifulSoup
-from geopy.geocoders import Nominatim
+import geopandas as gpd
 from shapely.geometry import Polygon, Point
-import googlemaps
+from flask import Flask, request, jsonify, render_template
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
-# Flask App Initialization
 app = Flask(__name__)
-SAVE_DIR = "static"
-os.makedirs(SAVE_DIR, exist_ok=True)
 
-# Setup Geolocation & Google Maps
-geolocator = Nominatim(user_agent="tourmapper")
+# Google Maps API Key (Ensure you have this set up in Heroku)
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
-gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
 
-def scrape_event_data(url):
+
+def scrape_data(url):
     """
-    Scrapes venue details & finds its coordinates.
+    Scrape venue details from the given URL using Selenium.
+    This function needs to be customized based on the actual website structure.
     """
     try:
-        response = requests.get(url)
-        soup = BeautifulSoup(response.text, "html.parser")
+        options = webdriver.ChromeOptions()
+        options.add_argument("--headless")
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        
+        driver.get(url)
+        time.sleep(2)  # Let the page load
 
-        # Extract Venue Details (Modify based on actual structure)
-        venue_name = soup.find("h1").text.strip()
-        address = soup.find("div", class_="venue-address").text.strip()
-        date = "2025-02-04"  # Modify to dynamically extract date if available
+        # Sample data extraction (Modify based on the website structure)
+        name = driver.find_element("xpath", "//h1").text  
+        address = driver.find_element("xpath", "//p[@class='address']").text  
+        
+        driver.quit()
 
-        # Geocode the venue address
-        location = geolocator.geocode(address)
-        if location:
-            lat, lon = location.latitude, location.longitude
-        else:
-            return None  # Skip if geolocation fails
-
-        # Create a polygon around the venue
-        venue_polygon = [
-            [lon - 0.001, lat - 0.001], [lon - 0.001, lat + 0.001],
-            [lon + 0.001, lat + 0.001], [lon + 0.001, lat - 0.001],
-            [lon - 0.001, lat - 0.001]
-        ]
-
-        venue_feature = {
-            "type": "Feature",
-            "properties": {"name": venue_name, "address": address, "date": date, "type": "venue"},
-            "geometry": {"type": "Polygon", "coordinates": [venue_polygon]}
+        return {
+            "name": name,
+            "address": address,
+            "city": "Unknown",
+            "state": "Unknown",
+            "zip": "00000",
+            "date": time.strftime("%Y-%m-%d")
         }
-
-        # Find nearby parking areas
-        parking_features = find_parking_areas(lat, lon)
-
-        return [venue_feature] + parking_features
     except Exception as e:
-        return None
+        return {"error": f"Scraping failed: {str(e)}"}
 
-def find_parking_areas(lat, lon):
+
+def get_parking_polygon(venue_address):
     """
-    Finds nearby parking lots and creates polygons around them.
+    Uses Google Maps API to find nearby parking lots and create a polygon around them.
     """
     try:
-        results = gmaps.places_nearby(location=(lat, lon), radius=500, type="parking")["results"]
-        parking_features = []
+        url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query=parking+near+{venue_address}&key={GOOGLE_MAPS_API_KEY}"
+        response = requests.get(url)
+        data = response.json()
 
-        for place in results[:5]:  # Limit to 5 nearby parking lots
-            parking_name = place["name"]
-            parking_lat = place["geometry"]["location"]["lat"]
-            parking_lon = place["geometry"]["location"]["lng"]
+        if "results" not in data or not data["results"]:
+            return None  # No parking areas found
 
-            # Create a polygon around the parking lot
-            parking_polygon = [
-                [parking_lon - 0.0008, parking_lat - 0.0008], [parking_lon - 0.0008, parking_lat + 0.0008],
-                [parking_lon + 0.0008, parking_lat + 0.0008], [parking_lon + 0.0008, parking_lat - 0.0008],
-                [parking_lon - 0.0008, parking_lat - 0.0008]
+        # Create polygons around parking locations
+        parking_coords = []
+        for place in data["results"]:
+            location = place["geometry"]["location"]
+            lat, lng = location["lat"], location["lng"]
+
+            # Creating a small square polygon around the parking location
+            offset = 0.0001
+            polygon = [
+                (lng - offset, lat - offset),
+                (lng - offset, lat + offset),
+                (lng + offset, lat + offset),
+                (lng + offset, lat - offset),
+                (lng - offset, lat - offset),
             ]
+            parking_coords.append(polygon)
 
-            parking_features.append({
-                "type": "Feature",
-                "properties": {"name": parking_name, "type": "parking"},
-                "geometry": {"type": "Polygon", "coordinates": [parking_polygon]}
-            })
-
-        return parking_features
+        return parking_coords
     except Exception as e:
-        return []
+        return None  # Fail silently if there's an error
+
 
 @app.route("/")
-def index():
+def home():
+    """
+    Render the main HTML page.
+    """
     return render_template("index.html")
+
 
 @app.route("/process-urls", methods=["POST"])
 def process_urls():
+    """
+    Handle URL submissions, scrape data, generate polygons, and track progress.
+    """
     data = request.get_json()
-    urls = data.get("urls", [])
 
-    if not urls:
-        return jsonify({"message": "No URLs provided."}), 400
+    if not data or "urls" not in data or not isinstance(data["urls"], list):
+        return jsonify({"error": "Invalid input: 'urls' must be a list"}), 400
 
-    results = []
-    for url in urls:
-        time.sleep(1)  # Simulated delay
-        features = scrape_event_data(url)
-        if features:
-            results.extend(features)
+    urls = data["urls"]
+    results = {"type": "FeatureCollection", "features": []}
 
-    if not results:
-        return jsonify({"message": "No valid data extracted"}), 400
+    for i, url in enumerate(urls):
+        venue_data = scrape_data(url)
+        if "error" in venue_data:
+            return jsonify(venue_data), 500  # Return error if scraping fails
 
-    # Save to GeoJSON
-    geojson_file = os.path.join(SAVE_DIR, "events.geojson")
-    with open(geojson_file, "w") as f:
-        json.dump({"type": "FeatureCollection", "features": results}, f, indent=2)
+        # Generate a sample polygon for the venue
+        venue_polygon = [
+            (-122.4 + i * 0.01, 37.8),
+            (-122.4 + i * 0.01, 37.81),
+            (-122.39 + i * 0.01, 37.81),
+            (-122.39 + i * 0.01, 37.8),
+            (-122.4 + i * 0.01, 37.8),
+        ]
 
-    return jsonify({"message": "Scraping Complete!", "download_url": "/static/events.geojson"})
+        # Get parking polygons
+        parking_polygons = get_parking_polygon(venue_data["address"])
 
-@app.route("/download")
-def download():
-    return send_file("static/events.geojson", as_attachment=True)
+        # Add venue data
+        results["features"].append({
+            "type": "Feature",
+            "properties": venue_data,
+            "geometry": {"type": "Polygon", "coordinates": [venue_polygon]}
+        })
+
+        # Add parking areas if available
+        if parking_polygons:
+            for parking in parking_polygons:
+                results["features"].append({
+                    "type": "Feature",
+                    "properties": {"name": "Parking Area"},
+                    "geometry": {"type": "Polygon", "coordinates": [parking]}
+                })
+
+        # Simulate progress update
+        time.sleep(1)
+
+    return jsonify(results)
+
 
 if __name__ == "__main__":
     app.run(debug=True)
