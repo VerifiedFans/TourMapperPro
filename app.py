@@ -1,131 +1,59 @@
-import os
+from flask import Flask, render_template, request, jsonify, send_file
+import time  # Simulate scraping delay
 import json
-import requests
-from flask import Flask, request, render_template, send_file
-from bs4 import BeautifulSoup
-from shapely.geometry import Point, Polygon, mapping
-import simplekml
-import geopy
-from geopy.geocoders import Nominatim
+import os
 
-# Flask App Initialization
 app = Flask(__name__)
 
-# Geocoder Initialization
-geolocator = Nominatim(user_agent="tourmapper")
+# Save directory for GeoJSON
+SAVE_DIR = "static"
+os.makedirs(SAVE_DIR, exist_ok=True)
 
-# Function to Scrape Event URL for Address
-def scrape_event_page(url):
-    """Extracts venue address from event webpage"""
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers)
-
-    if response.status_code != 200:
-        print(f"Failed to fetch: {url}")
-        return None
-
-    soup = BeautifulSoup(response.text, "html.parser")
-    
-    # Modify selectors based on actual event website structure
-    address = soup.find("span", {"class": "venue-address"}) or \
-              soup.find("div", {"class": "event-location"}) or \
-              soup.find("p", {"class": "address"})
-
-    if address:
-        return address.text.strip()
-    
-    return "Address Not Found"
-
-# Convert Address to Lat/Lon
-def get_lat_lon(address):
-    """Converts an address to latitude and longitude"""
-    try:
-        location = geolocator.geocode(address)
-        if location:
-            return location.latitude, location.longitude
-    except:
-        return None
-    return None
-
-# Create Polygon Around Venue & Parking Areas
-def create_polygon(lat, lon):
-    """Generates a simple polygon around the venue and parking"""
-    offset = 0.001  # Adjust for larger/smaller polygons
-    return Polygon([
-        (lon - offset, lat - offset),
-        (lon + offset, lat - offset),
-        (lon + offset, lat + offset),
-        (lon - offset, lat + offset),
-        (lon - offset, lat - offset)  # Close the polygon
-    ])
-
-# Save to GeoJSON File
-def save_geojson(geojson_data, filename="static/events.geojson"):
-    """Saves data as a GeoJSON file"""
-    if not geojson_data.get("features"):
-        print("No valid event data found. Skipping file generation.")
-        return
-    
-    with open(filename, "w", encoding="utf-8") as geojson_file:
-        json.dump(geojson_data, geojson_file, indent=2)
-    
-    print(f"GeoJSON file saved: {filename}")
-
-# Route for Main Page
-@app.route('/')
+@app.route("/")
 def index():
-    return render_template('index.html')
+    return render_template("index.html")
 
-# Route for Uploading & Processing URLs
-@app.route('/process-urls', methods=['POST'])
+@app.route("/process-urls", methods=["POST"])
 def process_urls():
-    uploaded_urls = request.form.get("urls")
-    if not uploaded_urls:
-        return "No URLs provided."
+    data = request.get_json()
+    urls = data.get("urls", [])
 
-    urls = uploaded_urls.split("\n")
-    
-    features = []
+    if not urls:
+        return jsonify({"message": "No URLs provided."}), 400
 
+    results = []
     for url in urls:
-        url = url.strip()
-        if not url:
-            continue
-
-        address = scrape_event_page(url)
-        if address == "Address Not Found":
-            continue
-
-        latlon = get_lat_lon(address)
-        if not latlon:
-            continue
-
-        lat, lon = latlon
-        polygon = create_polygon(lat, lon)
-
-        # Prepare GeoJSON Feature
-        feature = {
+        time.sleep(1)  # Simulated scraping delay
+        venue_name = f"Venue {len(results) + 1}"  # Dummy venue name
+        geojson_data = {
             "type": "Feature",
-            "geometry": mapping(polygon),
             "properties": {
-                "venue": address,
-                "lat": lat,
-                "lon": lon,
-                "source_url": url
+                "name": venue_name,
+                "address": "123 Example St",
+                "city": "Somewhere",
+                "state": "CA",
+                "zip": "12345",
+                "date": "2025-02-04"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [[-122.4, 37.8], [-122.4, 37.81], [-122.39, 37.81], [-122.39, 37.8], [-122.4, 37.8]]
+                ]
             }
         }
-        features.append(feature)
+        results.append(geojson_data)
 
-    geojson_data = {"type": "FeatureCollection", "features": features}
-    save_geojson(geojson_data)
+    # Save to GeoJSON file
+    geojson_file = os.path.join(SAVE_DIR, "events.geojson")
+    with open(geojson_file, "w") as f:
+        json.dump({"type": "FeatureCollection", "features": results}, f, indent=2)
 
-    return "GeoJSON file generated successfully."
+    return jsonify({"message": "Scraping Complete!", "urls": urls, "download_url": "/static/events.geojson"})
 
-# Route for Downloading GeoJSON File
-@app.route('/download-geojson')
-def download_geojson():
+@app.route("/download")
+def download():
     return send_file("static/events.geojson", as_attachment=True)
 
-# Run Flask App
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True)
