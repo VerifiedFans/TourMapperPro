@@ -16,8 +16,9 @@ app.config['DROPZONE_ALLOWED_FILE_TYPE'] = 'default'
 app.config['DROPZONE_MAX_FILE_SIZE'] = 10
 
 # Configure Celery
-app.config['CELERY_BROKER_URL'] = 'rediss://:p321cd2f912b63b15ee8467cedf8986e2f10f0215536ff28bf0d0aff6043617c2@ec2-3-230-61-127'
-app.config['CELERY_RESULT_BACKEND'] = 'rediss://:p321cd2f912b63b15ee8467cedf8986e2f10f0215536ff28bf0d0aff6043617c2@ec2-3-230-61-127'
+app.config['CELERY_BROKER_URL'] = 'rediss://:p321cd2f912b63b15ee8467cedf8986e2f10f0215536ff28bf0d0aff6043617c2@ec2-3-230-61-127d>@<redis-host>:<port>/0?ssl_cert_reqs=CERT_NONE'
+app.config['CELERY_RESULT_BACKEND'] = 'rediss://:p321cd2f912b63b15ee8467cedf8986e2f10f0215536ff28bf0d0aff6043617c2@ec2-3-230-61-127>@<redis-host>:<port>/0?ssl_cert_reqs=CERT_NONE'
+
 
 celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
 celery.conf.update(app.config)
