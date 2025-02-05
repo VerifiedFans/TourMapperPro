@@ -8,13 +8,14 @@ from flask_cors import CORS
 from celery import Celery
 from werkzeug.utils import secure_filename
 from bs4 import BeautifulSoup
+import ssl
 
 app = Flask(__name__)
 CORS(app)
 
-# ✅ Fix Redis SSL issue
+# ✅ Fix Redis SSL issue by setting `ssl_cert_reqs=CERT_NONE`
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0").replace("rediss://", "redis://")
-CELERY_BROKER_URL = REDIS_URL
+CELERY_BROKER_URL = f"{REDIS_URL}?ssl_cert_reqs=CERT_NONE"
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 
 celery = Celery(app.name, broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
@@ -27,7 +28,7 @@ celery.conf.update(
 
 # ✅ Ensure Redis is working
 try:
-    redis_client = redis.from_url(CELERY_BROKER_URL, decode_responses=True)
+    redis_client = redis.from_url(REDIS_URL, decode_responses=True, ssl_cert_reqs=ssl.CERT_NONE)
     redis_client.ping()
     print("✅ Redis Connected Successfully!")
 except redis.ConnectionError:
