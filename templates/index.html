@@ -11,77 +11,82 @@
         }
         #progress-container {
             width: 50%;
-            background-color: #f3f3f3;
-            border-radius: 5px;
             margin: 20px auto;
+            background-color: #ddd;
+            border-radius: 5px;
             display: none;
         }
         #progress-bar {
-            height: 30px;
             width: 0%;
-            background-color: green;
-            border-radius: 5px;
+            height: 25px;
+            background-color: #4CAF50;
             text-align: center;
             color: white;
-            line-height: 30px;
+            line-height: 25px;
+            border-radius: 5px;
         }
         #download-btn {
             display: none;
             margin-top: 20px;
-        }
-        #logo {
-            width: 200px;
-            margin-bottom: 20px;
+            padding: 10px 20px;
+            background-color: #008CBA;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
         }
     </style>
 </head>
 <body>
-    <img id="logo" src="{{ url_for('static', filename='logo.png') }}" alt="Tourmapper-Pro Logo">
-    
     <h2>Upload CSV File</h2>
     <input type="file" id="fileInput">
-    
+    <button onclick="startUpload()">Upload</button>
+
     <div id="progress-container">
         <div id="progress-bar">0%</div>
     </div>
-    
-    <button id="download-btn">Download GeoJSON</button>
+
+    <button id="download-btn" onclick="downloadFile()">Download GeoJSON</button>
 
     <script>
-        document.getElementById("fileInput").addEventListener("change", function() {
-            let file = this.files[0];
-            if (!file) return;
+        function startUpload() {
+            const fileInput = document.getElementById("fileInput");
+            if (!fileInput.files.length) {
+                alert("Please select a file first!");
+                return;
+            }
 
-            let formData = new FormData();
-            formData.append("file", file);
+            const formData = new FormData();
+            formData.append("file", fileInput.files[0]);
 
-            fetch("/upload", { method: "POST", body: formData })
-            .then(response => response.json())
-            .then(data => {
-                if (data.task_id) {
-                    document.getElementById("progress-container").style.display = "block";
-                    checkProgress(data.task_id);
+            const progressBar = document.getElementById("progress-bar");
+            const progressContainer = document.getElementById("progress-container");
+            const downloadBtn = document.getElementById("download-btn");
+
+            progressContainer.style.display = "block"; // Show progress bar
+            progressBar.style.width = "0%";
+            progressBar.innerText = "0%";
+            downloadBtn.style.display = "none"; // Hide download button initially
+
+            const eventSource = new EventSource("/upload");
+
+            eventSource.onmessage = function(event) {
+                if (event.data === "complete") {
+                    eventSource.close();  // Stop listening
+                    alert("Upload Complete!");
+                    progressBar.style.width = "100%";
+                    progressBar.innerText = "100%";
+                    downloadBtn.style.display = "block"; // Show download button
+                } else {
+                    progressBar.style.width = event.data + "%";
+                    progressBar.innerText = event.data + "%";
                 }
-            });
-        });
+            };
+        }
 
-        function checkProgress(taskId) {
-            fetch(`/task-status/${taskId}`)
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === "Processing") {
-                    document.getElementById("progress-bar").style.width = data.progress + "%";
-                    document.getElementById("progress-bar").innerText = data.progress + "%";
-                    setTimeout(() => checkProgress(taskId), 2000);
-                } else if (data.status === "Completed") {
-                    document.getElementById("progress-bar").style.width = "100%";
-                    document.getElementById("progress-bar").innerText = "Complete!";
-                    document.getElementById("download-btn").style.display = "block";
-                    document.getElementById("download-btn").onclick = () => window.location.href = data.file_url;
-                }
-            });
+        function downloadFile() {
+            window.location.href = "/download";
         }
     </script>
 </body>
 </html>
-
