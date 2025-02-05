@@ -1,3 +1,4 @@
+
 import os
 import json
 import pandas as pd
@@ -45,7 +46,8 @@ def process_csv(csv_file):
     df = pd.read_csv(csv_file)
 
     # Ensure required columns exist
-    if not {'venue_name', 'address', 'city', 'state', 'zip', 'date'}.issubset(df.columns):
+    required_columns = {'venue_name', 'address', 'city', 'state', 'zip', 'date'}
+    if not required_columns.issubset(df.columns):
         return jsonify({'error': 'CSV is missing required columns'}), 400
 
     features = []
