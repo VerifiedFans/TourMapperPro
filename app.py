@@ -1,30 +1,3 @@
-import traceback  # ✅ Add this at the top of app.py with other imports
-
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-
-    try:
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(file_path)
-
-        # ✅ Process the CSV file
-        geojson_filename = process_csv(file_path)
-
-        if not geojson_filename:
-            raise ValueError("GeoJSON generation failed")
-
-        return jsonify({'status': 'completed', 'file': geojson_filename})
-
-    except Exception as e:
-        traceback.print_exc()  # ✅ This prints full error logs to Heroku logs
-        return jsonify({'error': str(e)}), 500
 import os
 import json
 import time
@@ -32,6 +5,7 @@ import pandas as pd
 import googlemaps
 import redis
 import geojson
+import traceback
 from flask import Flask, render_template, request, jsonify, send_file
 from shapely.geometry import Polygon, mapping
 from werkzeug.utils import secure_filename
@@ -46,7 +20,7 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # ✅ Redis Cache Setup
 try:
-    cache = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+    cache = redis.Redis.from_url(os.getenv('REDIS_URL'), decode_responses=True)
 except Exception as e:
     print(f"Redis connection failed: {e}")
     cache = None
@@ -70,16 +44,22 @@ def upload_file():
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
 
-    filename = secure_filename(file.filename)
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(file_path)
-    
-    # Process the file
-    geojson_filename = process_csv(file_path)
-    if not geojson_filename:
-        return jsonify({'error': 'Failed to process file'}), 500
+    try:
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(file_path)
 
-    return jsonify({'status': 'completed', 'file': geojson_filename})
+        # ✅ Process the CSV file
+        geojson_filename = process_csv(file_path)
+
+        if not geojson_filename:
+            raise ValueError("GeoJSON generation failed")
+
+        return jsonify({'status': 'completed', 'file': geojson_filename})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 
 def process_csv(csv_file):
