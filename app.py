@@ -1,97 +1,97 @@
-from flask import Flask, render_template, request, send_file, jsonify
 import os
+from flask import Flask, request, jsonify, render_template, send_file, url_for
+from flask_dropzone import Dropzone
+from celery import Celery
+import redis
 import csv
-import json
-from shapely.geometry import Polygon, mapping
-from geopy.geocoders import Nominatim
+import time
+from shapely.geometry import Polygon
+import geojson
 
 app = Flask(__name__)
 
-UPLOAD_FOLDER = 'uploads'
-GEOJSON_FILE = 'static/output.geojson'
+# Configure Dropzone
+app.config['DROPZONE_UPLOAD_MULTIPLE'] = False
+app.config['DROPZONE_ALLOWED_FILE_TYPE'] = 'default'
+app.config['DROPZONE_MAX_FILE_SIZE'] = 10
+
+# Configure Celery
+app.config['CELERY_BROKER_URL'] = 'redis://:<your-redis-password>@<redis-host>:<port>/0'
+app.config['CELERY_RESULT_BACKEND'] = 'redis://:<your-redis-password>@<redis-host>:<port>/0'
+
+celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
+celery.conf.update(app.config)
+
+# Global Variables
+UPLOAD_FOLDER = os.path.join(os.getcwd(), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-geolocator = Nominatim(user_agent="tourmapper-pro")
-
 @app.route('/')
-def home():
+def index():
     return render_template('index.html')
 
 @app.route('/upload', methods=['POST'])
-def upload_file():
-    if 'file' not in request.files:
-        return jsonify({'success': False, 'error': 'No file uploaded'})
+def upload():
+    file = request.files.get('file')
+    if file:
+        file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+        file.save(file_path)
+        task = process_csv.delay(file_path)
+        return jsonify({'task_id': task.id}), 202
+    return jsonify({'error': 'No file uploaded'}), 400
 
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'success': False, 'error': 'No selected file'})
+@app.route('/task-status/<task_id>')
+def task_status(task_id):
+    task = process_csv.AsyncResult(task_id)
+    if task.state == 'PENDING':
+        return jsonify({'state': task.state, 'progress': 0})
+    elif task.state != 'FAILURE':
+        response = {'state': task.state, 'progress': task.info.get('progress', 0)}
+        if 'result' in task.info:
+            response['result'] = task.info['result']
+        return jsonify(response)
+    return jsonify({'state': task.state, 'progress': 0, 'error': str(task.info)}), 500
 
-    filepath = os.path.join(UPLOAD_FOLDER, file.filename)
-    file.save(filepath)
+@app.route('/download', methods=['GET'])
+def download():
+    file_path = os.path.join(UPLOAD_FOLDER, 'result.geojson')
+    return send_file(file_path, as_attachment=True)
 
-    process_csv(filepath)
+@celery.task(bind=True)
+def process_csv(self, file_path):
+    try:
+        polygons = []
+        with open(file_path, 'r') as file:
+            reader = csv.DictReader(file)
+            rows = list(reader)
+            total = len(rows)
 
-    return jsonify({'success': True})
-
-@app.route('/download')
-def download_geojson():
-    if os.path.exists(GEOJSON_FILE):
-        return send_file(GEOJSON_FILE, as_attachment=True)
-    else:
-        return "No GeoJSON file available", 404
-
-def process_csv(filepath):
-    features = []
-    
-    with open(filepath, newline='', encoding='utf-8') as csvfile:
-        reader = csv.DictReader(csvfile)
-        
-        for row in reader:
-            venue_name = row['venue_name']
-            address = row['address']
-            city = row['city']
-            state = row['state']
-            zip_code = row['zip']
-            full_address = f"{address}, {city}, {state} {zip_code}"
-
-            location = geolocator.geocode(full_address)
-            if location:
-                latitude, longitude = location.latitude, location.longitude
-
-                # Example polygon (venue footprint)
+            for i, row in enumerate(rows):
                 venue_polygon = Polygon([
-                    (longitude - 0.001, latitude - 0.001),
-                    (longitude + 0.001, latitude - 0.001),
-                    (longitude + 0.001, latitude + 0.001),
-                    (longitude - 0.001, latitude + 0.001),
-                    (longitude - 0.001, latitude - 0.001)
+                    (-84.113, 34.418), (-84.112, 34.417),
+                    (-84.112, 34.416), (-84.111, 34.416)
                 ])
-
-                # Example polygon (parking lot footprint)
                 parking_polygon = Polygon([
-                    (longitude - 0.002, latitude - 0.002),
-                    (longitude + 0.002, latitude - 0.002),
-                    (longitude + 0.002, latitude + 0.002),
-                    (longitude - 0.002, latitude + 0.002),
-                    (longitude - 0.002, latitude - 0.002)
+                    (-84.115, 34.420), (-84.114, 34.419),
+                    (-84.113, 34.418), (-84.115, 34.418)
                 ])
 
-                features.append({
-                    "type": "Feature",
-                    "geometry": mapping(venue_polygon),
-                    "properties": {"name": venue_name, "type": "venue"}
-                })
+                merged_polygon = venue_polygon.union(parking_polygon)
+                geojson_feature = geojson.Feature(geometry=geojson.mapping(merged_polygon), properties=row)
+                polygons.append(geojson_feature)
 
-                features.append({
-                    "type": "Feature",
-                    "geometry": mapping(parking_polygon),
-                    "properties": {"name": venue_name, "type": "parking"}
-                })
+                # Update progress
+                self.update_state(state='PROGRESS', meta={'progress': int((i + 1) / total * 100)})
 
-    geojson_data = {"type": "FeatureCollection", "features": features}
+        # Save the resulting GeoJSON
+        result_path = os.path.join(UPLOAD_FOLDER, 'result.geojson')
+        feature_collection = geojson.FeatureCollection(polygons)
+        with open(result_path, 'w') as geojson_file:
+            geojson.dump(feature_collection, geojson_file)
 
-    with open(GEOJSON_FILE, 'w') as geojson_file:
-        json.dump(geojson_data, geojson_file, indent=4)
+        return {'progress': 100, 'result': 'GeoJSON file created successfully'}
+    except Exception as e:
+        return {'progress': 0, 'error': str(e)}
 
 if __name__ == '__main__':
     app.run(debug=True)
