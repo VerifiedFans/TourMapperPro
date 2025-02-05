@@ -152,3 +152,6 @@ def download_geojson():
 # ✅ Run Flask App
 if __name__ == "__main__":
     app.run(debug=True)
+    @app.route("/")
+def home():
+    return render_template("index.html")  # Make sure "templates/index.html" exists
