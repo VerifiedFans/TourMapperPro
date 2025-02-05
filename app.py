@@ -1,3 +1,30 @@
+import traceback  # ✅ Add this at the top of app.py with other imports
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+
+    try:
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(file_path)
+
+        # ✅ Process the CSV file
+        geojson_filename = process_csv(file_path)
+
+        if not geojson_filename:
+            raise ValueError("GeoJSON generation failed")
+
+        return jsonify({'status': 'completed', 'file': geojson_filename})
+
+    except Exception as e:
+        traceback.print_exc()  # ✅ This prints full error logs to Heroku logs
+        return jsonify({'error': str(e)}), 500
 import os
 import json
 import time
