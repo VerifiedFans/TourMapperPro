@@ -1,129 +1,127 @@
-from flask import Flask, render_template, request, jsonify, url_for, send_file
-from celery import Celery
-import os
-import redis
-import time
-import json
-from shapely.geometry import Point, Polygon
-import geopandas as gpd
-import pandas as pd
 
+import os
+import json
+import csv
+from flask import Flask, request, render_template, jsonify, send_file
+from werkzeug.utils import secure_filename
+from celery import Celery
+import boto3
+
+# Flask app setup
 app = Flask(__name__)
 
-# Redis Configuration
-redis_url = os.environ.get(
-    "REDIS_URL", "rediss://:<your-redis-password>@<redis-host>:<port>/0?ssl_cert_reqs=CERT_NONE"
-)
-app.config['CELERY_BROKER_URL'] = redis_url
-app.config['CELERY_RESULT_BACKEND'] = redis_url
+# Storage folders
+UPLOAD_FOLDER = "uploads"
+RESULTS_FOLDER = "results"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(RESULTS_FOLDER, exist_ok=True)
 
-# Celery Initialization
-def make_celery(app):
-    celery = Celery(app.import_name, broker=app.config['CELERY_BROKER_URL'])
-    celery.conf.update(app.config)
-    return celery
+# Celery Configuration (Redis for task queue, but result backend disabled)
+app.config['CELERY_BROKER_URL'] = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+app.config['CELERY_RESULT_BACKEND'] = None  # Avoid storing large results in Redis
 
-celery = make_celery(app)
+# Celery Init
+celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
+celery.conf.update(app.config)
 
-# Route: Home Page
+# AWS S3 Configuration (Optional)
+AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
+AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
+S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+
+def upload_to_s3(file_path, s3_key):
+    """Upload file to AWS S3"""
+    if AWS_ACCESS_KEY and AWS_SECRET_KEY and S3_BUCKET_NAME:
+        s3 = boto3.client("s3", aws_access_key_id=AWS_ACCESS_KEY, aws_secret_access_key=AWS_SECRET_KEY)
+        s3.upload_file(file_path, S3_BUCKET_NAME, s3_key)
+        return f"https://{S3_BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
+    return None
+
 @app.route("/")
 def index():
     return render_template("index.html")
 
-# Route: Upload CSV File
 @app.route("/upload", methods=["POST"])
-def upload():
+def upload_file():
+    """Handles file uploads and starts Celery processing"""
     if "file" not in request.files:
-        return jsonify({"error": "No file provided"}), 400
+        return jsonify({"error": "No file uploaded"}), 400
 
     file = request.files["file"]
-
     if file.filename == "":
         return jsonify({"error": "No selected file"}), 400
 
-    # Save the uploaded CSV file
-    file_path = os.path.join("uploads", file.filename)
-    os.makedirs("uploads", exist_ok=True)
-    file.save(file_path)
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(filepath)
 
-    # Start the background task
-    task = process_csv.delay(file_path)
+    # Start Celery processing
+    task = process_file.delay(filename)
     return jsonify({"task_id": task.id}), 202
 
-# Route: Task Status
+@celery.task(bind=True)
+def process_file(self, filename):
+    """Process CSV file and generate GeoJSON"""
+    input_path = os.path.join(UPLOAD_FOLDER, filename)
+    output_path = os.path.join(RESULTS_FOLDER, f"{filename}.geojson")
+
+    features = []
+    total_lines = sum(1 for _ in open(input_path, 'r')) - 1  # Count lines (excluding header)
+
+    with open(input_path, "r") as file:
+        reader = csv.DictReader(file)
+        for i, row in enumerate(reader, start=1):
+            feature = {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(row["lon"]), float(row["lat"])]
+                },
+                "properties": {
+                    "name": row["venue_name"],
+                    "address": row["address"],
+                    "city": row["city"],
+                    "state": row["state"],
+                    "zip": row["zip"],
+                    "date": row["date"]
+                }
+            }
+            features.append(feature)
+
+            # Update progress every 10%
+            if i % (total_lines // 10 + 1) == 0:
+                self.update_state(state="PROGRESS", meta={"progress": int(i / total_lines * 100)})
+
+    # Save as GeoJSON
+    geojson_data = {"type": "FeatureCollection", "features": features}
+    with open(output_path, "w") as f:
+        json.dump(geojson_data, f)
+
+    # Upload to S3 (Optional)
+    s3_url = upload_to_s3(output_path, f"geojson/{filename}.geojson")
+
+    return {"file_url": s3_url if s3_url else f"/download/{filename}.geojson"}
+
 @app.route("/task-status/<task_id>")
 def task_status(task_id):
-    task = celery.AsyncResult(task_id)
+    """Check Celery task progress"""
+    task = process_file.AsyncResult(task_id)
     if task.state == "PENDING":
-        response = {"state": task.state, "progress": 0}
-    elif task.state != "FAILURE":
-        response = {
-            "state": task.state,
-            "progress": task.info.get("progress", 0),
-        }
-        if task.state == "SUCCESS":
-            response["result"] = task.info.get("result", {})
+        return jsonify({"status": "Pending", "progress": 0})
+    elif task.state == "PROGRESS":
+        return jsonify({"status": "Processing", "progress": task.info.get("progress", 0)})
+    elif task.state == "SUCCESS":
+        return jsonify({"status": "Completed", "file_url": task.info["file_url"]})
     else:
-        response = {"state": task.state, "error": str(task.info)}
-    return jsonify(response)
+        return jsonify({"status": "Failed"}), 500
 
-# Route: Download GeoJSON
 @app.route("/download/<filename>")
-def download(filename):
-    return send_file(f"output/{filename}", as_attachment=True)
-
-# Celery Task: Process CSV
-@celery.task(bind=True)
-def process_csv(self, file_path):
-    self.update_state(state="PROGRESS", meta={"progress": 10})
-
-    # Read the CSV file
-    data = pd.read_csv(file_path)
-    if not {"venue_name", "address", "city", "state", "zip", "date"}.issubset(data.columns):
-        raise ValueError("CSV file must contain 'venue_name', 'address', 'city', 'state', 'zip', and 'date' columns.")
-
-    self.update_state(state="PROGRESS", meta={"progress": 30})
-
-    # Generate Polygons (Placeholder Logic)
-    features = []
-    for _, row in data.iterrows():
-        venue_coords = Point(-84.1133, 34.4181)  # Replace with real geocoding logic
-        parking_coords = Point(-84.1129, 34.4179)  # Replace with real geocoding logic
-
-        venue_polygon = Polygon([
-            (venue_coords.x - 0.001, venue_coords.y - 0.001),
-            (venue_coords.x + 0.001, venue_coords.y - 0.001),
-            (venue_coords.x + 0.001, venue_coords.y + 0.001),
-            (venue_coords.x - 0.001, venue_coords.y + 0.001),
-            (venue_coords.x - 0.001, venue_coords.y - 0.001),
-        ])
-
-        parking_polygon = Polygon([
-            (parking_coords.x - 0.002, parking_coords.y - 0.002),
-            (parking_coords.x + 0.002, parking_coords.y - 0.002),
-            (parking_coords.x + 0.002, parking_coords.y + 0.002),
-            (parking_coords.x - 0.002, parking_coords.y + 0.002),
-            (parking_coords.x - 0.002, parking_coords.y - 0.002),
-        ])
-
-        # Combine venue and parking polygons
-        combined_polygon = venue_polygon.union(parking_polygon)
-        features.append({
-            "type": "Feature",
-            "geometry": json.loads(gpd.GeoSeries([combined_polygon]).to_json())["features"][0]["geometry"],
-            "properties": {"name": row["venue_name"]},
-        })
-
-    self.update_state(state="PROGRESS", meta={"progress": 70})
-
-    # Save GeoJSON
-    output_path = f"output/{os.path.basename(file_path).replace('.csv', '.geojson')}"
-    os.makedirs("output", exist_ok=True)
-    with open(output_path, "w") as f:
-        json.dump({"type": "FeatureCollection", "features": features}, f)
-
-    self.update_state(state="PROGRESS", meta={"progress": 100, "result": {"file_url": url_for("download", filename=os.path.basename(output_path))}})
-    return {"file_url": url_for("download", filename=os.path.basename(output_path))}
+def download_file(filename):
+    """Download generated GeoJSON file"""
+    file_path = os.path.join(RESULTS_FOLDER, filename)
+    if os.path.exists(file_path):
+        return send_file(file_path, as_attachment=True)
+    return jsonify({"error": "File not found"}), 404
 
 if __name__ == "__main__":
     app.run(debug=True)
