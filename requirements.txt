@@ -15,7 +15,6 @@ celery==5.4.0
 redis==5.2.1
 flask-dropzone
 numpy
-flask-cors
 flask-redis
 flask-sqlalchemy
 flask-wtf
