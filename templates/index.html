@@ -1,15 +1,40 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upload CSV</title>
+    <title>CSV Upload</title>
 </head>
 <body>
     <h2>Upload CSV File</h2>
-    <form action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="file">
-        <button type="submit">Upload</button>
-    </form>
+    <input type="file" id="fileInput">
+    <button onclick="uploadFile()">Upload</button>
+    
+    <h3 id="status"></h3>
+    
+    <script>
+        function uploadFile() {
+            let fileInput = document.getElementById('fileInput').files[0];
+            let formData = new FormData();
+            formData.append('file', fileInput);
+
+            fetch('/upload', { method: 'POST', body: formData })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.task_id) {
+                        checkStatus(data.task_id);
+                    }
+                });
+        }
+
+        function checkStatus(task_id) {
+            fetch(`/task-status/${task_id}`)
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('status').innerText = data.status;
+                    if (data.status === 'Processing...') {
+                        setTimeout(() => checkStatus(task_id), 2000);
+                    }
+                });
+        }
+    </script>
 </body>
 </html>
