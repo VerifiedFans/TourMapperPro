@@ -1,12 +1,14 @@
 import os
 import json
+import time
 import pandas as pd
 import googlemaps
-import time
 import redis
+import geojson
 from flask import Flask, render_template, request, jsonify, send_file
 from shapely.geometry import Polygon, mapping
 from werkzeug.utils import secure_filename
+from geopy.geocoders import Nominatim
 
 # ✅ Flask App Setup
 app = Flask(__name__)
@@ -14,9 +16,15 @@ UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "geojsons"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-app.config['CACHE'] = redis.Redis(host='localhost', port=6379, db=0)
 
-# ✅ Google Maps API Key (Replace with your actual key)
+# ✅ Redis Cache Setup
+try:
+    cache = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+except Exception as e:
+    print(f"Redis connection failed: {e}")
+    cache = None
+
+# ✅ Google Maps API Key
 GMAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "YOUR_API_KEY_HERE")
 gmaps = googlemaps.Client(key=GMAPS_API_KEY)
 
@@ -39,37 +47,45 @@ def upload_file():
     file_path = os.path.join(UPLOAD_FOLDER, filename)
     file.save(file_path)
     
-    # Start processing
+    # Process the file
     geojson_filename = process_csv(file_path)
+    if not geojson_filename:
+        return jsonify({'error': 'Failed to process file'}), 500
+
     return jsonify({'status': 'completed', 'file': geojson_filename})
+
 
 def process_csv(csv_file):
     """Reads CSV, finds lat/lon, creates polygons, and saves GeoJSON"""
     df = pd.read_csv(csv_file)
 
-    # Ensure required columns exist
     required_columns = {'venue_name', 'address', 'city', 'state', 'zip', 'date'}
     if not required_columns.issubset(df.columns):
-        return jsonify({'error': 'CSV is missing required columns'}), 400
+        return None
 
     features = []
-    batch_size = 100  # Process in batches of 100
+    batch_size = 50  # Batch size for rate limiting
     
     for index, row in df.iterrows():
         full_address = f"{row['address']}, {row['city']}, {row['state']} {row['zip']}"
-        cached_location = app.config['CACHE'].get(full_address)
+        lat, lon = None, None
+
+        # Check Redis cache first
+        if cache:
+            cached_location = cache.get(full_address)
+            if cached_location:
+                lat, lon = json.loads(cached_location)
         
-        if cached_location:
-            lat, lon = json.loads(cached_location)
-        else:
+        if not lat or not lon:
             geocode_result = gmaps.geocode(full_address)
             if not geocode_result:
                 continue
             lat = geocode_result[0]['geometry']['location']['lat']
             lon = geocode_result[0]['geometry']['location']['lng']
-            app.config['CACHE'].set(full_address, json.dumps([lat, lon]), ex=86400)  # Cache for 1 day
+            if cache:
+                cache.set(full_address, json.dumps([lat, lon]), ex=86400)
 
-        # ✅ Create Venue Polygon (Small square around venue)
+        # ✅ Create Venue Polygon
         venue_poly = Polygon([
             (lon - 0.0005, lat - 0.0005),
             (lon + 0.0005, lat - 0.0005),
@@ -78,7 +94,7 @@ def process_csv(csv_file):
             (lon - 0.0005, lat - 0.0005)
         ])
 
-        # ✅ Create Parking Polygon (Larger square for parking)
+        # ✅ Create Parking Polygon
         parking_poly = Polygon([
             (lon - 0.001, lat - 0.001),
             (lon + 0.001, lat - 0.001),
@@ -98,14 +114,14 @@ def process_csv(csv_file):
             "geometry": mapping(parking_poly),
             "properties": {"name": row['venue_name'], "type": "parking"}
         })
-
+        
         if (index + 1) % batch_size == 0:
-            time.sleep(1)  # Rate limiting after processing each batch
+            time.sleep(1)  # ✅ Rate limiting for Google API
 
     # ✅ Save GeoJSON File
     geojson_data = {"type": "FeatureCollection", "features": features}
     geojson_filename = os.path.join(OUTPUT_FOLDER, "venues.geojson")
-
+    
     with open(geojson_filename, "w") as f:
         json.dump(geojson_data, f)
 
