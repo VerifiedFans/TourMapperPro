@@ -1,4 +1,3 @@
-
 import os
 import json
 import pandas as pd
@@ -54,6 +53,7 @@ def process_csv(csv_file):
         return jsonify({'error': 'CSV is missing required columns'}), 400
 
     features = []
+    batch_size = 100  # Process in batches of 100
     
     for index, row in df.iterrows():
         full_address = f"{row['address']}, {row['city']}, {row['state']} {row['zip']}"
@@ -99,7 +99,8 @@ def process_csv(csv_file):
             "properties": {"name": row['venue_name'], "type": "parking"}
         })
 
-        time.sleep(1)  # Rate limiting to prevent API overload
+        if (index + 1) % batch_size == 0:
+            time.sleep(1)  # Rate limiting after processing each batch
 
     # ✅ Save GeoJSON File
     geojson_data = {"type": "FeatureCollection", "features": features}
