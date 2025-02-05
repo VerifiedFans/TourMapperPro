@@ -1,127 +1,97 @@
+from flask import Flask, render_template, request, send_file, jsonify
 import os
+import csv
 import json
-import pandas as pd
-import redis
-from flask import Flask, request, render_template, jsonify, send_file
-from flask_cors import CORS
-from flask_dropzone import Dropzone
-from celery import Celery
+from shapely.geometry import Polygon, mapping
 from geopy.geocoders import Nominatim
-from shapely.geometry import Point, Polygon
-import numpy as np
 
 app = Flask(__name__)
-CORS(app)
-dropzone = Dropzone(app)
 
-# 🔹 Load Celery Configuration from Heroku ENV Vars
-app.config["CELERY_BROKER_URL"] = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-app.config["CELERY_RESULT_BACKEND"] = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+UPLOAD_FOLDER = 'uploads'
+GEOJSON_FILE = 'static/output.geojson'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-celery = Celery(app.name, broker=app.config["CELERY_BROKER_URL"])
-celery.conf.update(app.config)
+geolocator = Nominatim(user_agent="tourmapper-pro")
 
-# 🔹 Ensure Redis Connection
-redis_client = redis.StrictRedis.from_url(app.config["CELERY_BROKER_URL"], decode_responses=True)
+@app.route('/')
+def home():
+    return render_template('index.html')
 
-# 🔹 Setup Uploads Folder
-UPLOAD_FOLDER = "uploads"
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
-
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-
-# 🔹 Home Page (Frontend)
-@app.route("/")
-def index():
-    return render_template("index.html")
-
-# 🔹 Background Task: Process CSV & Generate GeoJSON
-@celery.task(bind=True)
-def process_csv(self, file_path):
-    try:
-        df = pd.read_csv(file_path)
-
-        if {"venue", "address", "city", "state", "zip", "date"}.issubset(df.columns):
-            geolocator = Nominatim(user_agent="geoapiExercises")
-            geojson_data = {"type": "FeatureCollection", "features": []}
-
-            for index, row in df.iterrows():
-                venue_info = f"{row['address']}, {row['city']}, {row['state']} {row['zip']}"
-                location = geolocator.geocode(venue_info)
-
-                if location:
-                    # Create a basic rectangle around the venue as a polygon
-                    lat, lon = location.latitude, location.longitude
-                    offset = 0.001  # ~100m offset
-
-                    polygon_coords = [
-                        [lon - offset, lat - offset],
-                        [lon + offset, lat - offset],
-                        [lon + offset, lat + offset],
-                        [lon - offset, lat + offset],
-                        [lon - offset, lat - offset],
-                    ]
-
-                    feature = {
-                        "type": "Feature",
-                        "geometry": {"type": "Polygon", "coordinates": [polygon_coords]},
-                        "properties": {"name": row["venue"], "date": row["date"]},
-                    }
-
-                    geojson_data["features"].append(feature)
-
-                progress = int((index + 1) / len(df) * 100)
-                self.update_state(state="PROGRESS", meta={"progress": progress})
-
-            output_file = os.path.join(UPLOAD_FOLDER, "output.geojson")
-            with open(output_file, "w") as f:
-                json.dump(geojson_data, f)
-
-            return {"status": "SUCCESS", "output_file": output_file}
-        else:
-            return {"status": "ERROR", "message": "CSV missing required columns"}
-
-    except Exception as e:
-        return {"status": "ERROR", "message": str(e)}
-
-# 🔹 File Upload Route
-@app.route("/upload", methods=["POST"])
+@app.route('/upload', methods=['POST'])
 def upload_file():
-    if "file" not in request.files:
-        return jsonify({"status": "ERROR", "message": "No file uploaded"}), 400
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file uploaded'})
 
-    file = request.files["file"]
-    if file.filename == "":
-        return jsonify({"status": "ERROR", "message": "No selected file"}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'No selected file'})
 
-    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
-    file.save(file_path)
+    filepath = os.path.join(UPLOAD_FOLDER, file.filename)
+    file.save(filepath)
 
-    task = process_csv.apply_async(args=[file_path])
-    return jsonify({"task_id": task.id, "status": "Processing"}), 202
+    process_csv(filepath)
 
-# 🔹 Task Status Route
-@app.route("/task-status/<task_id>", methods=["GET"])
-def task_status(task_id):
-    task = process_csv.AsyncResult(task_id)
+    return jsonify({'success': True})
 
-    if task.state == "PENDING":
-        response = {"status": "PENDING"}
-    elif task.state == "PROGRESS":
-        response = {"status": "PROGRESS", "progress": task.info.get("progress", 0)}
-    elif task.state == "SUCCESS":
-        response = {"status": "SUCCESS", "output_file": task.info["output_file"]}
-    else:
-        response = {"status": "FAILED", "message": str(task.info)}
-
-    return jsonify(response)
-
-# 🔹 Download GeoJSON
-@app.route("/download", methods=["GET"])
+@app.route('/download')
 def download_geojson():
-    file_path = os.path.join(UPLOAD_FOLDER, "output.geojson")
-    return send_file(file_path, as_attachment=True)
+    if os.path.exists(GEOJSON_FILE):
+        return send_file(GEOJSON_FILE, as_attachment=True)
+    else:
+        return "No GeoJSON file available", 404
 
-if __name__ == "__main__":
+def process_csv(filepath):
+    features = []
+    
+    with open(filepath, newline='', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        
+        for row in reader:
+            venue_name = row['venue_name']
+            address = row['address']
+            city = row['city']
+            state = row['state']
+            zip_code = row['zip']
+            full_address = f"{address}, {city}, {state} {zip_code}"
+
+            location = geolocator.geocode(full_address)
+            if location:
+                latitude, longitude = location.latitude, location.longitude
+
+                # Example polygon (venue footprint)
+                venue_polygon = Polygon([
+                    (longitude - 0.001, latitude - 0.001),
+                    (longitude + 0.001, latitude - 0.001),
+                    (longitude + 0.001, latitude + 0.001),
+                    (longitude - 0.001, latitude + 0.001),
+                    (longitude - 0.001, latitude - 0.001)
+                ])
+
+                # Example polygon (parking lot footprint)
+                parking_polygon = Polygon([
+                    (longitude - 0.002, latitude - 0.002),
+                    (longitude + 0.002, latitude - 0.002),
+                    (longitude + 0.002, latitude + 0.002),
+                    (longitude - 0.002, latitude + 0.002),
+                    (longitude - 0.002, latitude - 0.002)
+                ])
+
+                features.append({
+                    "type": "Feature",
+                    "geometry": mapping(venue_polygon),
+                    "properties": {"name": venue_name, "type": "venue"}
+                })
+
+                features.append({
+                    "type": "Feature",
+                    "geometry": mapping(parking_polygon),
+                    "properties": {"name": venue_name, "type": "parking"}
+                })
+
+    geojson_data = {"type": "FeatureCollection", "features": features}
+
+    with open(GEOJSON_FILE, 'w') as geojson_file:
+        json.dump(geojson_data, geojson_file, indent=4)
+
+if __name__ == '__main__':
     app.run(debug=True)
