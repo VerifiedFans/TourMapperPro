@@ -4,53 +4,100 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tourmapper-Pro</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <title>Tourmapper Pro</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='dropzone.css') }}">
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f5f5f5;
+            font-family: Arial, sans-serif;
+        }
+        #logo {
+            margin-bottom: 20px;
+        }
+        #progress-container {
+            width: 50%;
+            background: #e0e0e0;
+            border-radius: 5px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        #progress-bar {
+            height: 20px;
+            background: #76c7c0;
+            width: 0;
+            transition: width 0.4s;
+        }
+        #download-btn {
+            display: none;
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #download-btn:hover {
+            background-color: #0056b3;
+        }
+    </style>
+    <script src="{{ url_for('static', filename='dropzone.js') }}"></script>
+    <script>
+        function uploadFile() {
+            const progressBar = document.getElementById('progress-bar');
+            const progressText = document.getElementById('progress-text');
+            const downloadBtn = document.getElementById('download-btn');
+
+            const fileInput = document.querySelector('input[type="file"]');
+            const file = fileInput.files[0];
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                const taskId = data.task_id;
+                const interval = setInterval(() => {
+                    fetch(`/task-status/${taskId}`)
+                        .then(response => response.json())
+                        .then(status => {
+                            progressBar.style.width = status.progress + '%';
+                            progressText.innerText = status.progress + '%';
+
+                            if (status.progress === 100) {
+                                clearInterval(interval);
+                                downloadBtn.style.display = 'block';
+                            }
+                        });
+                }, 1000);
+            })
+            .catch(error => console.error('Error:', error));
+        }
+
+        function downloadFile() {
+            window.location.href = '/download';
+        }
+    </script>
 </head>
 <body>
-    <div class="container">
-        <!-- Logo -->
-        <img src="{{ url_for('static', filename='logo.png') }}" alt="Tourmapper-Pro Logo" class="logo">
-        
-        <h2>Upload CSV File</h2>
-        
-        <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
-            <input type="file" name="file" required>
-            <button type="submit">Upload</button>
-        </form>
-
-        <!-- Progress Bar -->
-        <div class="progress">
-            <div class="progress-bar" id="progressBar">0%</div>
-        </div>
-
-        <!-- Download Button -->
-        <a id="downloadBtn" style="display: none;" class="btn btn-success" href="/download">Download GeoJSON</a>
+    <img id="logo" src="{{ url_for('static', filename='logo.png') }}" alt="Tourmapper Pro Logo" width="150">
+    <h1>Tourmapper Pro</h1>
+    <input type="file" accept=".csv" onchange="uploadFile()">
+    <div id="progress-container">
+        <div id="progress-bar"></div>
     </div>
-
-    <script>
-        document.getElementById('uploadForm').onsubmit = function (e) {
-            e.preventDefault();
-            let formData = new FormData(this);
-
-            document.querySelector('.progress').style.display = 'block';
-            let progressBar = document.getElementById('progressBar');
-            progressBar.style.width = '10%';
-            progressBar.innerText = '10%';
-
-            fetch('/upload', { method: 'POST', body: formData })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        progressBar.style.width = '100%';
-                        progressBar.innerText = '100%';
-                        document.getElementById('downloadBtn').style.display = 'block';
-                    } else {
-                        alert('Upload failed: ' + data.error);
-                    }
-                })
-                .catch(error => console.error('Error:', error));
-        };
-    </script>
+    <p id="progress-text">0%</p>
+    <button id="download-btn" onclick="downloadFile()">Download GeoJSON</button>
 </body>
 </html>
+
