@@ -1,40 +1,56 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>CSV Upload</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tourmapper-Pro</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
-    <h2>Upload CSV File</h2>
-    <input type="file" id="fileInput">
-    <button onclick="uploadFile()">Upload</button>
-    
-    <h3 id="status"></h3>
-    
+    <div class="container">
+        <!-- Logo -->
+        <img src="{{ url_for('static', filename='logo.png') }}" alt="Tourmapper-Pro Logo" class="logo">
+        
+        <h2>Upload CSV File</h2>
+        
+        <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
+            <input type="file" name="file" required>
+            <button type="submit">Upload</button>
+        </form>
+
+        <!-- Progress Bar -->
+        <div class="progress">
+            <div class="progress-bar" id="progressBar">0%</div>
+        </div>
+
+        <!-- Download Button -->
+        <a id="downloadBtn" style="display: none;" class="btn btn-success" href="/download">Download GeoJSON</a>
+    </div>
+
     <script>
-        function uploadFile() {
-            let fileInput = document.getElementById('fileInput').files[0];
-            let formData = new FormData();
-            formData.append('file', fileInput);
+        document.getElementById('uploadForm').onsubmit = function (e) {
+            e.preventDefault();
+            let formData = new FormData(this);
+
+            document.querySelector('.progress').style.display = 'block';
+            let progressBar = document.getElementById('progressBar');
+            progressBar.style.width = '10%';
+            progressBar.innerText = '10%';
 
             fetch('/upload', { method: 'POST', body: formData })
                 .then(response => response.json())
                 .then(data => {
-                    if (data.task_id) {
-                        checkStatus(data.task_id);
+                    if (data.success) {
+                        progressBar.style.width = '100%';
+                        progressBar.innerText = '100%';
+                        document.getElementById('downloadBtn').style.display = 'block';
+                    } else {
+                        alert('Upload failed: ' + data.error);
                     }
-                });
-        }
-
-        function checkStatus(task_id) {
-            fetch(`/task-status/${task_id}`)
-                .then(response => response.json())
-                .then(data => {
-                    document.getElementById('status').innerText = data.status;
-                    if (data.status === 'Processing...') {
-                        setTimeout(() => checkStatus(task_id), 2000);
-                    }
-                });
-        }
+                })
+                .catch(error => console.error('Error:', error));
+        };
     </script>
 </body>
 </html>
