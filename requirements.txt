@@ -21,3 +21,4 @@ flask-sqlalchemy
 flask-wtf
 flask-celery-helper
 pandas
+boto3
