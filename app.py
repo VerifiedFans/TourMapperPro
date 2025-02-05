@@ -1,131 +1,137 @@
-
 import os
 import json
-import csv
-from flask import Flask, request, render_template, jsonify, send_file
-from werkzeug.utils import secure_filename
+import time
+from flask import Flask, request, jsonify, render_template, send_file, redirect, url_for
+from flask_cors import CORS
+from flask_dropzone import Dropzone
+from flask_redis import FlaskRedis
 from celery import Celery
-import redis
-import boto3
+import pandas as pd
+import geojson
+from shapely.geometry import Polygon
+from geopy.geocoders import Nominatim
 
 # Initialize Flask app
 app = Flask(__name__)
+CORS(app)
 
-# Set up folders
+# Configure Upload Folder
 UPLOAD_FOLDER = "uploads"
-RESULTS_FOLDER = "results"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(RESULTS_FOLDER, exist_ok=True)
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
-# Load environment variables
-REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+# Configure Celery with Redis
+app.config["REDIS_URL"] = os.getenv("REDIS_URL", "rediss://your-redis-url:6379/")
+app.config["CELERY_BROKER_URL"] = app.config["REDIS_URL"]
+app.config["CELERY_RESULT_BACKEND"] = app.config["REDIS_URL"]
 
-# Celery Configuration (Make sure Redis is set up correctly)
-app.config['CELERY_BROKER_URL'] = REDIS_URL
-app.config['CELERY_RESULT_BACKEND'] = REDIS_URL  # Fix backend config
+# Fix Redis SSL Error
+if app.config["REDIS_URL"].startswith("rediss://"):
+    app.config["REDIS_URL"] += "?ssl_cert_reqs=CERT_NONE"
+    app.config["CELERY_BROKER_URL"] = app.config["REDIS_URL"]
+    app.config["CELERY_RESULT_BACKEND"] = app.config["REDIS_URL"]
 
-# Initialize Celery
-celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'], backend=app.config['CELERY_RESULT_BACKEND'])
+redis_client = FlaskRedis(app)
+celery = Celery(app.name, broker=app.config["CELERY_BROKER_URL"])
 celery.conf.update(app.config)
 
-# AWS S3 Configuration (Optional)
-AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
-AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+dropzone = Dropzone(app)
 
-def upload_to_s3(file_path, s3_key):
-    """Upload file to AWS S3"""
-    if AWS_ACCESS_KEY and AWS_SECRET_KEY and S3_BUCKET_NAME:
-        s3 = boto3.client("s3", aws_access_key_id=AWS_ACCESS_KEY, aws_secret_access_key=AWS_SECRET_KEY)
-        s3.upload_file(file_path, S3_BUCKET_NAME, s3_key)
-        return f"https://{S3_BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
-    return None
+# Geolocator for converting addresses to coordinates
+geolocator = Nominatim(user_agent="geojson_mapper")
+
+# ----------------------------- #
+#          ROUTES               #
+# ----------------------------- #
 
 @app.route("/")
-def index():
+def home():
     return render_template("index.html")
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
-    """Handles CSV upload and starts Celery processing"""
+    """Handles CSV file uploads."""
     if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+        return jsonify({"error": "No file provided"}), 400
 
     file = request.files["file"]
     if file.filename == "":
         return jsonify({"error": "No selected file"}), 400
 
-    filename = secure_filename(file.filename)
-    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], file.filename)
     file.save(filepath)
 
-    # Start Celery processing
-    task = process_file.delay(filename)
+    # Process file in the background
+    task = process_csv.delay(filepath)
+
     return jsonify({"task_id": task.id}), 202
 
-@celery.task(bind=True)
-def process_file(self, filename):
-    """Process CSV and generate GeoJSON"""
-    input_path = os.path.join(UPLOAD_FOLDER, filename)
-    output_path = os.path.join(RESULTS_FOLDER, f"{filename}.geojson")
-
-    features = []
-    total_lines = sum(1 for _ in open(input_path, 'r')) - 1
-
-    with open(input_path, "r") as file:
-        reader = csv.DictReader(file)
-        for i, row in enumerate(reader, start=1):
-            feature = {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [float(row["lon"]), float(row["lat"])]
-                },
-                "properties": {
-                    "name": row["venue_name"],
-                    "address": row["address"],
-                    "city": row["city"],
-                    "state": row["state"],
-                    "zip": row["zip"],
-                    "date": row["date"]
-                }
-            }
-            features.append(feature)
-
-            # Update progress every 10%
-            if i % (total_lines // 10 + 1) == 0:
-                self.update_state(state="PROGRESS", meta={"progress": int(i / total_lines * 100)})
-
-    # Save GeoJSON
-    geojson_data = {"type": "FeatureCollection", "features": features}
-    with open(output_path, "w") as f:
-        json.dump(geojson_data, f)
-
-    # Upload to S3 (Optional)
-    s3_url = upload_to_s3(output_path, f"geojson/{filename}.geojson")
-
-    return {"file_url": s3_url if s3_url else f"/download/{filename}.geojson"}
-
-@app.route("/task-status/<task_id>")
+@app.route("/status/<task_id>")
 def task_status(task_id):
-    """Check Celery task progress"""
-    task = process_file.AsyncResult(task_id)
+    """Checks the status of Celery tasks."""
+    task = process_csv.AsyncResult(task_id)
     if task.state == "PENDING":
-        return jsonify({"status": "Pending", "progress": 0})
-    elif task.state == "PROGRESS":
-        return jsonify({"status": "Processing", "progress": task.info.get("progress", 0)})
+        response = {"status": "Processing", "progress": 10}
     elif task.state == "SUCCESS":
-        return jsonify({"status": "Completed", "file_url": task.info["file_url"]})
+        response = {"status": "Completed", "progress": 100, "download_url": url_for("download_geojson", filename=task.result)}
+    elif task.state == "FAILURE":
+        response = {"status": "Failed"}
     else:
-        return jsonify({"status": "Failed"}), 500
+        response = {"status": task.state}
+    
+    return jsonify(response)
 
 @app.route("/download/<filename>")
-def download_file(filename):
-    """Download generated GeoJSON file"""
-    file_path = os.path.join(RESULTS_FOLDER, filename)
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
-    return jsonify({"error": "File not found"}), 404
+def download_geojson(filename):
+    """Allows users to download the generated GeoJSON file."""
+    file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    return send_file(file_path, as_attachment=True)
+
+# ----------------------------- #
+#       CELERY TASKS            #
+# ----------------------------- #
+
+@celery.task(bind=True)
+def process_csv(self, filepath):
+    """Processes the uploaded CSV and generates GeoJSON."""
+    df = pd.read_csv(filepath)
+    
+    features = []
+    for index, row in df.iterrows():
+        venue_address = f"{row['address']}, {row['city']}, {row['state']} {row['zip']}"
+        location = geolocator.geocode(venue_address)
+        
+        if location:
+            lat, lon = location.latitude, location.longitude
+            polygon = Polygon([
+                (lon - 0.001, lat - 0.001),
+                (lon + 0.001, lat - 0.001),
+                (lon + 0.001, lat + 0.001),
+                (lon - 0.001, lat + 0.001),
+                (lon - 0.001, lat - 0.001)
+            ])
+            
+            feature = geojson.Feature(
+                geometry=polygon,
+                properties={"name": row["venue_name"]}
+            )
+            features.append(feature)
+
+        # Update task progress
+        self.update_state(state="PROGRESS", meta={"progress": int((index + 1) / len(df) * 100)})
+
+    geojson_data = geojson.FeatureCollection(features)
+    output_file = os.path.join(app.config["UPLOAD_FOLDER"], "venues.geojson")
+    
+    with open(output_file, "w") as f:
+        json.dump(geojson_data, f)
+
+    return "venues.geojson"
+
+# ----------------------------- #
+#         MAIN EXECUTION        #
+# ----------------------------- #
 
 if __name__ == "__main__":
     app.run(debug=True)
