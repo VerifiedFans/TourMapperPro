@@ -11,8 +11,8 @@ selenium>4.5.0
 webdriver-manager==4.0.1
 geopandas
 geojson
-celery
-redis
+celery==5.4.0
+redis==5.2.1
 flask-dropzone
 numpy
 flask-cors
