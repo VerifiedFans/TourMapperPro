@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, jsonify
-from flask_celery import make_celery
+from celery import Celery
 import redis
 import pandas as pd
 import os
