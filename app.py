@@ -1,157 +1,146 @@
 import os
+import csv
 import json
-import time
 import requests
-import pandas as pd
-import redis
-from flask import Flask, request, jsonify, send_file, render_template
-from flask_cors import CORS
-from celery import Celery
-from shapely.geometry import Polygon, Point
+from flask import Flask, request, render_template, jsonify, send_file
 from werkzeug.utils import secure_filename
+from celery import Celery
+from geopy.geocoders import Nominatim
+import geojson
+from shapely.geometry import Point, Polygon
 
 app = Flask(__name__)
-CORS(app)
 
-# ✅ Redis & Celery Setup
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-CELERY_BROKER_URL = REDIS_URL
-CELERY_RESULT_BACKEND = REDIS_URL
+# 🟢 Celery Configuration
+app.config['CELERY_BROKER_URL'] = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+app.config['CELERY_RESULT_BACKEND'] = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
 
-celery = Celery(app.name, broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
-celery.conf.update(task_serializer="json", accept_content=["json"], result_serializer="json")
+celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
+celery.conf.update(app.config)
 
 UPLOAD_FOLDER = "uploads"
-OUTPUT_FOLDER = "output"
 ALLOWED_EXTENSIONS = {"csv"}
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["OUTPUT_FOLDER"] = OUTPUT_FOLDER
+
+# Ensure upload folder exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# ✅ Allowed File Types
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
+# 🟢 Function to check allowed file extensions
 def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# ✅ Geocode Address to Get Latitude & Longitude
-def geocode_address(address):
-    API_KEY = os.getenv("GEOCODING_API_KEY")  # Add Google Maps or OpenStreetMap API key
-    url = f"https://nominatim.openstreetmap.org/search?q={address}&format=json"
-
-    try:
-        response = requests.get(url)
-        data = response.json()
-        if data:
-            return {
-                "latitude": float(data[0]["lat"]),
-                "longitude": float(data[0]["lon"]),
-            }
-        return {"latitude": None, "longitude": None}
-    except Exception as e:
-        return {"latitude": None, "longitude": None, "error": str(e)}
-
-# ✅ Generate a Polygon Around the Venue Footprint
-def generate_venue_polygon(lat, lon, offset=0.0005):
-    return [
-        [lon - offset, lat - offset, 0],
-        [lon + offset, lat - offset, 0],
-        [lon + offset, lat + offset, 0],
-        [lon - offset, lat + offset, 0],
-        [lon - offset, lat - offset, 0],  # Close the loop
-    ]
-
-# ✅ Generate a Polygon for Parking Lot (Offset from Venue)
-def generate_parking_polygon(lat, lon, offset=0.001, size=0.0006):
-    return [
-        [lon - size + offset, lat - size + offset, 0],
-        [lon + size + offset, lat - size + offset, 0],
-        [lon + size + offset, lat + size + offset, 0],
-        [lon - size + offset, lat + size + offset, 0],
-        [lon - size + offset, lat - size + offset, 0],  # Close the loop
-    ]
-
-# ✅ Celery Task: Process CSV, Geocode Addresses, and Generate GeoJSON
+# 🟢 Celery Task: Process CSV File
 @celery.task(bind=True)
-def process_venues(self, filepath):
-    df = pd.read_csv(filepath)
-
-    # ✅ Check Required Columns
-    required_cols = {"venue_name", "address", "city", "state", "zip", "date"}
-    if not required_cols.issubset(df.columns):
-        return {"status": "Failed", "error": "Missing required columns"}
-
+def process_csv(self, file_path):
+    geolocator = Nominatim(user_agent="geojson_generator")
     features = []
 
-    # ✅ Process Each Venue
-    for index, row in df.iterrows():
-        address = f"{row['address']}, {row['city']}, {row['state']} {row['zip']}"
-        geo = geocode_address(address)
+    with open(file_path, newline='', encoding="utf-8") as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            venue_name = row.get("venue_name")
+            address = row.get("address")
+            city = row.get("city")
+            state = row.get("state")
+            zip_code = row.get("zip")
+            date = row.get("date")
 
-        if geo["latitude"] and geo["longitude"]:
-            venue_polygon = generate_venue_polygon(geo["latitude"], geo["longitude"])
-            parking_polygon = generate_parking_polygon(geo["latitude"], geo["longitude"])
+            full_address = f"{address}, {city}, {state}, {zip_code}"
+            location = geolocator.geocode(full_address)
 
-            # ✅ Add Venue Polygon
-            features.append({
-                "type": "Feature",
-                "geometry": {"type": "Polygon", "coordinates": [venue_polygon]},
-                "properties": {
-                    "name": f"{row['date']} {row['venue_name']} {row['city']} {row['state']}",
-                    "category": "Venue",
-                },
-            })
+            if location:
+                lat, lon = location.latitude, location.longitude
 
-            # ✅ Add Parking Polygon
-            features.append({
-                "type": "Feature",
-                "geometry": {"type": "Polygon", "coordinates": [parking_polygon]},
-                "properties": {
-                    "name": f"{row['date']} {row['venue_name']} Parking {row['city']} {row['state']}",
-                    "category": "Parking",
-                },
-            })
+                # Create a sample polygon for the venue footprint
+                venue_polygon = Polygon([
+                    (lon - 0.0002, lat - 0.0002),
+                    (lon + 0.0002, lat - 0.0002),
+                    (lon + 0.0002, lat + 0.0002),
+                    (lon - 0.0002, lat + 0.0002),
+                    (lon - 0.0002, lat - 0.0002)
+                ])
 
-        self.update_state(state="PROGRESS", meta={"current": index + 1, "total": len(df)})
-        time.sleep(1)
+                # Create a sample polygon for the parking area
+                parking_polygon = Polygon([
+                    (lon - 0.0005, lat - 0.0005),
+                    (lon + 0.0005, lat - 0.0005),
+                    (lon + 0.0005, lat + 0.0005),
+                    (lon - 0.0005, lat + 0.0005),
+                    (lon - 0.0005, lat - 0.0005)
+                ])
 
-    # ✅ Save to GeoJSON
-    geojson_output = os.path.join(OUTPUT_FOLDER, "venues_parking.geojson")
-    with open(geojson_output, "w") as f:
-        json.dump({"type": "FeatureCollection", "features": features}, f)
+                # Merge polygons into a MultiPolygon
+                feature = geojson.Feature(
+                    geometry=venue_polygon,
+                    properties={
+                        "name": f"{date} {venue_name} {city}, {state}",
+                        "address": full_address,
+                        "type": "venue"
+                    }
+                )
 
-    return {"status": "Completed", "geojson_file": geojson_output}
+                parking_feature = geojson.Feature(
+                    geometry=parking_polygon,
+                    properties={
+                        "name": f"{venue_name} Parking",
+                        "address": full_address,
+                        "type": "parking"
+                    }
+                )
 
-# ✅ Upload CSV File
-@app.route("/upload", methods=["POST"])
+                features.append(feature)
+                features.append(parking_feature)
+
+    geojson_data = geojson.FeatureCollection(features)
+
+    output_file = file_path.replace(".csv", ".geojson")
+    with open(output_file, "w") as f:
+        json.dump(geojson_data, f)
+
+    return output_file
+
+# 🟢 Route: Upload File
+@app.route("/", methods=["GET", "POST"])
 def upload_file():
-    if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+    if request.method == "POST":
+        if "file" not in request.files:
+            return jsonify({"error": "No file part"}), 400
 
-    file = request.files["file"]
-    if file.filename == "" or not allowed_file(file.filename):
-        return jsonify({"error": "Invalid file type"}), 400
+        file = request.files["file"]
 
-    filename = secure_filename(file.filename)
-    filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    file.save(filepath)
+        if file.filename == "":
+            return jsonify({"error": "No selected file"}), 400
 
-    task = process_venues.apply_async(args=[filepath])
-    return jsonify({"task_id": task.id}), 202
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+            file.save(file_path)
 
-# ✅ Check Task Status
+            task = process_csv.apply_async(args=[file_path])
+
+            return jsonify({"task_id": task.id}), 202
+
+    return render_template("index.html")
+
+# 🟢 Route: Check Task Status
 @app.route("/task-status/<task_id>")
 def task_status(task_id):
-    task = process_venues.AsyncResult(task_id)
-    return jsonify({"status": task.state, "info": task.info})
+    task = process_csv.AsyncResult(task_id)
+    if task.state == "PENDING":
+        response = {"status": "Processing..."}
+    elif task.state == "SUCCESS":
+        response = {"status": "Completed", "download_url": f"/download/{task.result}"}
+    else:
+        response = {"status": "Failed"}
+    return jsonify(response)
 
-# ✅ Download GeoJSON File
-@app.route("/download/geojson", methods=["GET"])
-def download_geojson():
-    return send_file("output/venues_parking.geojson", as_attachment=True)
+# 🟢 Route: Download GeoJSON
+@app.route("/download/<filename>")
+def download_file(filename):
+    file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    return send_file(file_path, as_attachment=True)
 
-# ✅ Run Flask App
+# 🟢 Start Flask
 if __name__ == "__main__":
     app.run(debug=True)
-    @app.route("/")
-def home():
-    return render_template("index.html")  # Make sure "templates/index.html" exists
