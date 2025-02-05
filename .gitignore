@@ -1,0 +1,13 @@
+# Ignore system directories
+Library/
+Documents/
+Downloads/
+.Trash/
+.DS_Store
+
+# Ignore Python virtual environment
+venv/
+__pycache__/
+
+# Ignore Heroku files (if not needed)
+.heroku/
