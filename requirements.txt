@@ -14,3 +14,10 @@ geojson
 celery
 redis
 flask-dropzone
+numpy
+flask-cors
+flask-redis
+flask-sqlachemy
+flask-wtf
+flask-celery-helper
+pandas
