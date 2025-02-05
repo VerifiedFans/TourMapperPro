@@ -1,144 +1,154 @@
 import os
-import time
 import json
-import redis
+import time
 import requests
-from flask import Flask, render_template, request, jsonify, send_file
+import pandas as pd
+import redis
+from flask import Flask, request, jsonify, send_file, render_template
 from flask_cors import CORS
 from celery import Celery
+from shapely.geometry import Polygon, Point
 from werkzeug.utils import secure_filename
-from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 CORS(app)
 
-# ✅ Fix Redis SSL issue: Remove `ssl_cert_reqs`
+# ✅ Redis & Celery Setup
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
 
 celery = Celery(app.name, broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
-celery.conf.update(
-    task_serializer="json",
-    accept_content=["json"],
-    result_serializer="json",
-    broker_transport_options={"visibility_timeout": 3600},
-)
+celery.conf.update(task_serializer="json", accept_content=["json"], result_serializer="json")
 
-# ✅ Ensure Redis is working
-try:
-    redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-    redis_client.ping()
-    print("✅ Redis Connected Successfully!")
-except redis.ConnectionError:
-    print("❌ Redis Connection Failed!")
-
-# ✅ File Upload Setup
 UPLOAD_FOLDER = "uploads"
-ALLOWED_EXTENSIONS = {"txt", "csv"}
+OUTPUT_FOLDER = "output"
+ALLOWED_EXTENSIONS = {"csv"}
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["OUTPUT_FOLDER"] = OUTPUT_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
+# ✅ Allowed File Types
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# ✅ Web Scraper Function
-def scrape_event_data(url):
+# ✅ Geocode Address to Get Latitude & Longitude
+def geocode_address(address):
+    API_KEY = os.getenv("GEOCODING_API_KEY")  # Add Google Maps or OpenStreetMap API key
+    url = f"https://nominatim.openstreetmap.org/search?q={address}&format=json"
+
     try:
-        response = requests.get(url, timeout=10)
-        if response.status_code != 200:
-            return {"url": url, "error": f"HTTP {response.status_code}"}
+        response = requests.get(url)
+        data = response.json()
+        if data:
+            return {
+                "latitude": float(data[0]["lat"]),
+                "longitude": float(data[0]["lon"]),
+            }
+        return {"latitude": None, "longitude": None}
+    except Exception as e:
+        return {"latitude": None, "longitude": None, "error": str(e)}
 
-        soup = BeautifulSoup(response.text, "html.parser")
+# ✅ Generate a Polygon Around the Venue Footprint
+def generate_venue_polygon(lat, lon, offset=0.0005):
+    return [
+        [lon - offset, lat - offset, 0],
+        [lon + offset, lat - offset, 0],
+        [lon + offset, lat + offset, 0],
+        [lon - offset, lat + offset, 0],
+        [lon - offset, lat - offset, 0],  # Close the loop
+    ]
 
-        venue_name = soup.find(text=lambda t: "Performing Arts Center" in t or "Theater" in t)
-        address = soup.find(text=lambda t: any(x in t for x in [" Rd", " St", " Ave", " Blvd"]))
-        city_state_zip = soup.find(text=lambda t: "," in t and len(t.split(",")) == 2)
+# ✅ Generate a Polygon for Parking Lot (Offset from Venue)
+def generate_parking_polygon(lat, lon, offset=0.001, size=0.0006):
+    return [
+        [lon - size + offset, lat - size + offset, 0],
+        [lon + size + offset, lat - size + offset, 0],
+        [lon + size + offset, lat + size + offset, 0],
+        [lon - size + offset, lat + size + offset, 0],
+        [lon - size + offset, lat - size + offset, 0],  # Close the loop
+    ]
 
-        date = soup.find(text=lambda t: any(month in t for month in 
-                   ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]))
-
-        return {
-            "url": url,
-            "venue": venue_name.strip() if venue_name else "Not Found",
-            "address": address.strip() if address else "Not Found",
-            "city_state_zip": city_state_zip.strip() if city_state_zip else "Not Found",
-            "date": date.strip() if date else "Not Found"
-        }
-    except requests.exceptions.RequestException as e:
-        return {"url": url, "error": str(e)}
-
-# ✅ Celery Task
+# ✅ Celery Task: Process CSV, Geocode Addresses, and Generate GeoJSON
 @celery.task(bind=True)
-def process_urls(self, urls):
-    if not urls:
-        return {"status": "Failed", "error": "No valid URLs provided."}
+def process_venues(self, filepath):
+    df = pd.read_csv(filepath)
 
-    results = []
-    for index, url in enumerate(urls):
-        results.append(scrape_event_data(url))
-        self.update_state(state="PROGRESS", meta={"current": index + 1, "total": len(urls)})
+    # ✅ Check Required Columns
+    required_cols = {"venue_name", "address", "city", "state", "zip", "date"}
+    if not required_cols.issubset(df.columns):
+        return {"status": "Failed", "error": "Missing required columns"}
+
+    features = []
+
+    # ✅ Process Each Venue
+    for index, row in df.iterrows():
+        address = f"{row['address']}, {row['city']}, {row['state']} {row['zip']}"
+        geo = geocode_address(address)
+
+        if geo["latitude"] and geo["longitude"]:
+            venue_polygon = generate_venue_polygon(geo["latitude"], geo["longitude"])
+            parking_polygon = generate_parking_polygon(geo["latitude"], geo["longitude"])
+
+            # ✅ Add Venue Polygon
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": [venue_polygon]},
+                "properties": {
+                    "name": f"{row['date']} {row['venue_name']} {row['city']} {row['state']}",
+                    "category": "Venue",
+                },
+            })
+
+            # ✅ Add Parking Polygon
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": [parking_polygon]},
+                "properties": {
+                    "name": f"{row['date']} {row['venue_name']} Parking {row['city']} {row['state']}",
+                    "category": "Parking",
+                },
+            })
+
+        self.update_state(state="PROGRESS", meta={"current": index + 1, "total": len(df)})
         time.sleep(1)
 
-    output_file = os.path.join(UPLOAD_FOLDER, "processed_urls.json")
-    with open(output_file, "w") as f:
-        json.dump(results, f)
+    # ✅ Save to GeoJSON
+    geojson_output = os.path.join(OUTPUT_FOLDER, "venues_parking.geojson")
+    with open(geojson_output, "w") as f:
+        json.dump({"type": "FeatureCollection", "features": features}, f)
 
-    return {"status": "Completed", "file": output_file}
+    return {"status": "Completed", "geojson_file": geojson_output}
 
-# ✅ Upload Endpoint (Fixes 400 Error)
+# ✅ Upload CSV File
 @app.route("/upload", methods=["POST"])
 def upload_file():
-    urls = []
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
 
-    # 1️⃣ Handle file upload
-    if "file" in request.files:
-        file = request.files["file"]
-        if file.filename and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-            file.save(filepath)
-            with open(filepath, "r") as f:
-                urls = [line.strip() for line in f if line.strip()]
-    
-    # 2️⃣ Handle copy-paste URLs
-    if request.form.get("urls"):
-        pasted_urls = request.form["urls"].splitlines()
-        urls.extend([url.strip() for url in pasted_urls if url.strip()])
+    file = request.files["file"]
+    if file.filename == "" or not allowed_file(file.filename):
+        return jsonify({"error": "Invalid file type"}), 400
 
-    # 3️⃣ Validate URLs
-    urls = [url for url in urls if url.startswith("http")]
-    if not urls:
-        return jsonify({"error": "No valid URLs found"}), 400
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    file.save(filepath)
 
-    # 4️⃣ Start Celery task
-    task = process_urls.apply_async(args=[urls])
+    task = process_venues.apply_async(args=[filepath])
     return jsonify({"task_id": task.id}), 202
 
 # ✅ Check Task Status
-@app.route("/task-status/<task_id>", methods=["GET"])
+@app.route("/task-status/<task_id>")
 def task_status(task_id):
-    task = process_urls.AsyncResult(task_id)
-    if task.state == "PENDING":
-        response = {"state": task.state, "progress": 0}
-    elif task.state != "FAILURE":
-        response = {"state": task.state, "progress": task.info.get("current", 0) / task.info.get("total", 1) * 100}
-    else:
-        response = {"state": "FAILED", "error": str(task.info)}
-    return jsonify(response)
+    task = process_venues.AsyncResult(task_id)
+    return jsonify({"status": task.state, "info": task.info})
 
-# ✅ Download Processed File
-@app.route("/download", methods=["GET"])
-def download_file():
-    filepath = os.path.join(UPLOAD_FOLDER, "processed_urls.json")
-    if os.path.exists(filepath):
-        return send_file(filepath, as_attachment=True)
-    return jsonify({"error": "File not found"}), 404
+# ✅ Download GeoJSON File
+@app.route("/download/geojson", methods=["GET"])
+def download_geojson():
+    return send_file("output/venues_parking.geojson", as_attachment=True)
 
-# ✅ Home Route
-@app.route("/")
-def home():
-    return render_template("index.html")
-
+# ✅ Run Flask App
 if __name__ == "__main__":
     app.run(debug=True)
