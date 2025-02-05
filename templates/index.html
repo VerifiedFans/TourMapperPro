@@ -3,70 +3,114 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tourmapper-Pro</title>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <title>TourMapper Pro</title>
     <style>
-        body { text-align: center; font-family: Arial, sans-serif; }
-        #progress-container { display: none; margin-top: 20px; }
-        #progress-bar { width: 0%; height: 20px; background: green; }
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 20px;
+        }
+        textarea {
+            width: 80%;
+            height: 150px;
+            margin: 10px 0;
+        }
+        button {
+            padding: 10px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        .progress-container {
+            width: 80%;
+            background-color: #ddd;
+            margin: 20px auto;
+        }
+        .progress-bar {
+            width: 0%;
+            height: 20px;
+            background-color: green;
+            text-align: center;
+            color: white;
+        }
     </style>
 </head>
 <body>
+    <h1>TourMapper Pro</h1>
 
-    <h1>Tourmapper-Pro</h1>
+    <!-- File Upload -->
+    <h3>Upload URLs</h3>
     <input type="file" id="fileInput">
-    <button id="uploadBtn">Upload CSV</button>
+    <button onclick="uploadFile()">Upload</button>
 
-    <div id="progress-container">
-        <p>Processing...</p>
-        <div id="progress-bar"></div>
+    <!-- Copy-Paste URLs -->
+    <h3>Or Paste URLs</h3>
+    <textarea id="urlTextarea" placeholder="Paste URLs here (one per line)"></textarea>
+    <button onclick="uploadText()">Submit URLs</button>
+
+    <br>
+    <button onclick="viewFiles()">View Uploaded Files</button>
+    <button onclick="startScraping()">Start Scraping</button>
+    <button onclick="clearFiles()">Clear Files</button>
+
+    <!-- Progress Bar -->
+    <div class="progress-container">
+        <div class="progress-bar" id="progressBar">0%</div>
     </div>
 
-    <button id="downloadBtn" style="display:none;">Download GeoJSON</button>
+    <button onclick="downloadGeoJSON()">Download GeoJSON</button>
 
     <script>
-        $(document).ready(function() {
-            $("#uploadBtn").click(function() {
-                let file = $("#fileInput")[0].files[0];
-                if (!file) { alert("Please select a file."); return; }
+        function uploadFile() {
+            let fileInput = document.getElementById("fileInput").files[0];
+            if (!fileInput) {
+                alert("No file selected.");
+                return;
+            }
+            let formData = new FormData();
+            formData.append("file", fileInput);
 
-                let formData = new FormData();
-                formData.append("file", file);
+            fetch("/upload", { method: "POST", body: formData })
+                .then(response => response.json())
+                .then(data => alert(data.message))
+                .catch(error => console.error("Error:", error));
+        }
 
-                $("#progress-container").show();
-                $("#progress-bar").css("width", "0%");
-                
-                $.ajax({
-                    url: "/upload",
-                    type: "POST",
-                    data: formData,
-                    processData: false,
-                    contentType: false,
-                    xhr: function() {
-                        let xhr = new window.XMLHttpRequest();
-                        xhr.upload.addEventListener("progress", function(evt) {
-                            if (evt.lengthComputable) {
-                                let percentComplete = (evt.loaded / evt.total) * 100;
-                                $("#progress-bar").css("width", percentComplete + "%");
-                            }
-                        }, false);
-                        return xhr;
-                    },
-                    success: function(response) {
-                        $("#progress-bar").css("width", "100%");
-                        $("#downloadBtn").show();
-                    },
-                    error: function() {
-                        alert("Error processing file.");
-                    }
-                });
-            });
+        function uploadText() {
+            let urls = document.getElementById("urlTextarea").value;
+            let blob = new Blob([urls], { type: "text/plain" });
+            let formData = new FormData();
+            formData.append("file", blob, "pasted_urls.txt");
 
-            $("#downloadBtn").click(function() {
-                window.location.href = "/download";
-            });
-        });
+            fetch("/upload", { method: "POST", body: formData })
+                .then(response => response.json())
+                .then(data => alert(data.message))
+                .catch(error => console.error("Error:", error));
+        }
+
+        function viewFiles() {
+            fetch("/view_files")
+                .then(response => response.json())
+                .then(data => alert("Uploaded Files: " + data.files.join(", ")))
+                .catch(error => console.error("Error:", error));
+        }
+
+        function startScraping() {
+            fetch("/start_scraping", { method: "POST" })
+                .then(response => response.json())
+                .then(data => alert(data.message))
+                .catch(error => console.error("Error:", error));
+        }
+
+        function clearFiles() {
+            fetch("/clear_files", { method: "POST" })
+                .then(response => response.json())
+                .then(data => alert(data.message))
+                .catch(error => console.error("Error:", error));
+        }
+
+        function downloadGeoJSON() {
+            window.location.href = "/download";
+        }
     </script>
-
 </body>
 </html>
