@@ -1,2 +1,1 @@
-web: gunicorn app:app
-worker: celery -A app.celery worker --loglevel=info
+web: gunicorn app:app --workers=2 --timeout 120
