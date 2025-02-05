@@ -13,3 +13,4 @@ geopandas
 geojson
 celery
 redis
+pip freeze
