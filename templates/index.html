@@ -5,54 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-            padding: 20px;
-        }
-        textarea {
-            width: 80%;
-            height: 150px;
-            margin: 10px 0;
-        }
-        button {
-            padding: 10px;
-            margin: 5px;
-            cursor: pointer;
-        }
-        .progress-container {
-            width: 80%;
-            background-color: #ddd;
-            margin: 20px auto;
-        }
-        .progress-bar {
-            width: 0%;
-            height: 20px;
-            background-color: green;
-            text-align: center;
-            color: white;
-        }
+        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+        .progress-container { width: 80%; background-color: #ddd; margin: 20px auto; }
+        .progress-bar { width: 0%; height: 20px; background-color: green; color: white; text-align: center; }
     </style>
 </head>
 <body>
     <h1>TourMapper Pro</h1>
 
-    <!-- File Upload -->
-    <h3>Upload URLs</h3>
+    <h3>Upload CSV File</h3>
     <input type="file" id="fileInput">
     <button onclick="uploadFile()">Upload</button>
 
-    <!-- Copy-Paste URLs -->
-    <h3>Or Paste URLs</h3>
-    <textarea id="urlTextarea" placeholder="Paste URLs here (one per line)"></textarea>
-    <button onclick="uploadText()">Submit URLs</button>
-
-    <br>
-    <button onclick="viewFiles()">View Uploaded Files</button>
-    <button onclick="startScraping()">Start Scraping</button>
-    <button onclick="clearFiles()">Clear Files</button>
-
-    <!-- Progress Bar -->
     <div class="progress-container">
         <div class="progress-bar" id="progressBar">0%</div>
     </div>
@@ -62,49 +26,13 @@
     <script>
         function uploadFile() {
             let fileInput = document.getElementById("fileInput").files[0];
-            if (!fileInput) {
-                alert("No file selected.");
-                return;
-            }
+            if (!fileInput) { alert("No file selected."); return; }
             let formData = new FormData();
             formData.append("file", fileInput);
 
             fetch("/upload", { method: "POST", body: formData })
                 .then(response => response.json())
-                .then(data => alert(data.message))
-                .catch(error => console.error("Error:", error));
-        }
-
-        function uploadText() {
-            let urls = document.getElementById("urlTextarea").value;
-            let blob = new Blob([urls], { type: "text/plain" });
-            let formData = new FormData();
-            formData.append("file", blob, "pasted_urls.txt");
-
-            fetch("/upload", { method: "POST", body: formData })
-                .then(response => response.json())
-                .then(data => alert(data.message))
-                .catch(error => console.error("Error:", error));
-        }
-
-        function viewFiles() {
-            fetch("/view_files")
-                .then(response => response.json())
-                .then(data => alert("Uploaded Files: " + data.files.join(", ")))
-                .catch(error => console.error("Error:", error));
-        }
-
-        function startScraping() {
-            fetch("/start_scraping", { method: "POST" })
-                .then(response => response.json())
-                .then(data => alert(data.message))
-                .catch(error => console.error("Error:", error));
-        }
-
-        function clearFiles() {
-            fetch("/clear_files", { method: "POST" })
-                .then(response => response.json())
-                .then(data => alert(data.message))
+                .then(data => { alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); })
                 .catch(error => console.error("Error:", error));
         }
 
