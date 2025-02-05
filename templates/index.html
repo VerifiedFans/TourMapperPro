@@ -6,6 +6,7 @@
     <title>TourMapper Pro</title>
     <style>
         body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+        .drop-area { border: 2px dashed #007bff; padding: 20px; margin: 10px; cursor: pointer; }
         .progress-container { width: 80%; background-color: #ddd; margin: 20px auto; }
         .progress-bar { width: 0%; height: 20px; background-color: green; color: white; text-align: center; }
     </style>
@@ -16,6 +17,13 @@
     <h3>Upload CSV File</h3>
     <input type="file" id="fileInput">
     <button onclick="uploadFile()">Upload</button>
+
+    <h3>Or Drag & Drop File Here</h3>
+    <div class="drop-area" id="dropArea">Drop your CSV file here</div>
+
+    <h3>Or Paste CSV Content Below</h3>
+    <textarea id="csvTextarea" placeholder="Paste CSV data here..."></textarea>
+    <button onclick="uploadText()">Submit CSV</button>
 
     <div class="progress-container">
         <div class="progress-bar" id="progressBar">0%</div>
@@ -35,6 +43,35 @@
                 .then(data => { alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); })
                 .catch(error => console.error("Error:", error));
         }
+
+        function uploadText() {
+            let csvText = document.getElementById("csvTextarea").value;
+            if (!csvText) { alert("No text provided."); return; }
+            let blob = new Blob([csvText], { type: "text/csv" });
+            let formData = new FormData();
+            formData.append("file", blob, "pasted_csv.csv");
+
+            fetch("/upload", { method: "POST", body: formData })
+                .then(response => response.json())
+                .then(data => { alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); })
+                .catch(error => console.error("Error:", error));
+        }
+
+        document.getElementById("dropArea").addEventListener("drop", function(event) {
+            event.preventDefault();
+            let file = event.dataTransfer.files[0];
+            let formData = new FormData();
+            formData.append("file", file);
+
+            fetch("/upload", { method: "POST", body: formData })
+                .then(response => response.json())
+                .then(data => { alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); })
+                .catch(error => console.error("Error:", error));
+        });
+
+        document.getElementById("dropArea").addEventListener("dragover", function(event) {
+            event.preventDefault();
+        });
 
         function downloadGeoJSON() {
             window.location.href = "/download";
