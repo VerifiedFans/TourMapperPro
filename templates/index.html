@@ -4,89 +4,69 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tourmapper-Pro</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
-        body {
-            text-align: center;
-            font-family: Arial, sans-serif;
-        }
-        #progress-container {
-            width: 50%;
-            margin: 20px auto;
-            background-color: #ddd;
-            border-radius: 5px;
-            display: none;
-        }
-        #progress-bar {
-            width: 0%;
-            height: 25px;
-            background-color: #4CAF50;
-            text-align: center;
-            color: white;
-            line-height: 25px;
-            border-radius: 5px;
-        }
-        #download-btn {
-            display: none;
-            margin-top: 20px;
-            padding: 10px 20px;
-            background-color: #008CBA;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
+        body { text-align: center; font-family: Arial, sans-serif; }
+        #progress-container { display: none; margin-top: 20px; }
+        #progress-bar { width: 0%; height: 20px; background: green; }
     </style>
 </head>
 <body>
-    <h2>Upload CSV File</h2>
+
+    <h1>Tourmapper-Pro</h1>
     <input type="file" id="fileInput">
-    <button onclick="startUpload()">Upload</button>
+    <button id="uploadBtn">Upload CSV</button>
 
     <div id="progress-container">
-        <div id="progress-bar">0%</div>
+        <p>Processing...</p>
+        <div id="progress-bar"></div>
     </div>
 
-    <button id="download-btn" onclick="downloadFile()">Download GeoJSON</button>
+    <button id="downloadBtn" style="display:none;">Download GeoJSON</button>
 
     <script>
-        function startUpload() {
-            const fileInput = document.getElementById("fileInput");
-            if (!fileInput.files.length) {
-                alert("Please select a file first!");
-                return;
-            }
+        $(document).ready(function() {
+            $("#uploadBtn").click(function() {
+                let file = $("#fileInput")[0].files[0];
+                if (!file) { alert("Please select a file."); return; }
 
-            const formData = new FormData();
-            formData.append("file", fileInput.files[0]);
+                let formData = new FormData();
+                formData.append("file", file);
 
-            const progressBar = document.getElementById("progress-bar");
-            const progressContainer = document.getElementById("progress-container");
-            const downloadBtn = document.getElementById("download-btn");
+                $("#progress-container").show();
+                $("#progress-bar").css("width", "0%");
+                
+                $.ajax({
+                    url: "/upload",
+                    type: "POST",
+                    data: formData,
+                    processData: false,
+                    contentType: false,
+                    xhr: function() {
+                        let xhr = new window.XMLHttpRequest();
+                        xhr.upload.addEventListener("progress", function(evt) {
+                            if (evt.lengthComputable) {
+                                let percentComplete = (evt.loaded / evt.total) * 100;
+                                $("#progress-bar").css("width", percentComplete + "%");
+                            }
+                        }, false);
+                        return xhr;
+                    },
+                    success: function(response) {
+                        $("#progress-bar").css("width", "100%");
+                        $("#downloadBtn").show();
+                    },
+                    error: function() {
+                        alert("Error processing file.");
+                    }
+                });
+            });
 
-            progressContainer.style.display = "block"; // Show progress bar
-            progressBar.style.width = "0%";
-            progressBar.innerText = "0%";
-            downloadBtn.style.display = "none"; // Hide download button initially
-
-            const eventSource = new EventSource("/upload");
-
-            eventSource.onmessage = function(event) {
-                if (event.data === "complete") {
-                    eventSource.close();  // Stop listening
-                    alert("Upload Complete!");
-                    progressBar.style.width = "100%";
-                    progressBar.innerText = "100%";
-                    downloadBtn.style.display = "block"; // Show download button
-                } else {
-                    progressBar.style.width = event.data + "%";
-                    progressBar.innerText = event.data + "%";
-                }
-            };
-        }
-
-        function downloadFile() {
-            window.location.href = "/download";
-        }
+            $("#downloadBtn").click(function() {
+                window.location.href = "/download";
+            });
+        });
     </script>
+
 </body>
 </html>
