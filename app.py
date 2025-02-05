@@ -1,6 +1,5 @@
 import os
 import json
-import time
 import pandas as pd
 import googlemaps
 from flask import Flask, render_template, request, jsonify, send_file
@@ -14,7 +13,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # ✅ Google Maps API Key (Replace with your actual key)
-GMAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"
+GMAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "YOUR_API_KEY_HERE")
 gmaps = googlemaps.Client(key=GMAPS_API_KEY)
 
 # ✅ Home Page
@@ -103,3 +102,4 @@ def download_file():
 
 if __name__ == "__main__":
     app.run(debug=True)
+`
