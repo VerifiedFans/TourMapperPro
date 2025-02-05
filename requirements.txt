@@ -17,7 +17,7 @@ flask-dropzone
 numpy
 flask-cors
 flask-redis
-flask-sqalchemy
+flask-sqlalchemy
 flask-wtf
 flask-celery-helper
 pandas
