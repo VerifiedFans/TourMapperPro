@@ -5,23 +5,27 @@ import csv
 from flask import Flask, request, render_template, jsonify, send_file
 from werkzeug.utils import secure_filename
 from celery import Celery
+import redis
 import boto3
 
-# Flask app setup
+# Initialize Flask app
 app = Flask(__name__)
 
-# Storage folders
+# Set up folders
 UPLOAD_FOLDER = "uploads"
 RESULTS_FOLDER = "results"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
 
-# Celery Configuration (Redis for task queue, but result backend disabled)
-app.config['CELERY_BROKER_URL'] = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
-app.config['CELERY_RESULT_BACKEND'] = None  # Avoid storing large results in Redis
+# Load environment variables
+REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
 
-# Celery Init
-celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
+# Celery Configuration (Make sure Redis is set up correctly)
+app.config['CELERY_BROKER_URL'] = REDIS_URL
+app.config['CELERY_RESULT_BACKEND'] = REDIS_URL  # Fix backend config
+
+# Initialize Celery
+celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'], backend=app.config['CELERY_RESULT_BACKEND'])
 celery.conf.update(app.config)
 
 # AWS S3 Configuration (Optional)
@@ -43,7 +47,7 @@ def index():
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
-    """Handles file uploads and starts Celery processing"""
+    """Handles CSV upload and starts Celery processing"""
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
 
@@ -61,12 +65,12 @@ def upload_file():
 
 @celery.task(bind=True)
 def process_file(self, filename):
-    """Process CSV file and generate GeoJSON"""
+    """Process CSV and generate GeoJSON"""
     input_path = os.path.join(UPLOAD_FOLDER, filename)
     output_path = os.path.join(RESULTS_FOLDER, f"{filename}.geojson")
 
     features = []
-    total_lines = sum(1 for _ in open(input_path, 'r')) - 1  # Count lines (excluding header)
+    total_lines = sum(1 for _ in open(input_path, 'r')) - 1
 
     with open(input_path, "r") as file:
         reader = csv.DictReader(file)
@@ -92,7 +96,7 @@ def process_file(self, filename):
             if i % (total_lines // 10 + 1) == 0:
                 self.update_state(state="PROGRESS", meta={"progress": int(i / total_lines * 100)})
 
-    # Save as GeoJSON
+    # Save GeoJSON
     geojson_data = {"type": "FeatureCollection", "features": features}
     with open(output_path, "w") as f:
         json.dump(geojson_data, f)
