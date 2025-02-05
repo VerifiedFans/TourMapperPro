@@ -1,98 +1,15 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>URL Uploader</title>
-    <style>
-        body {
-            text-align: center;
-            font-family: Arial, sans-serif;
-        }
-        .container {
-            width: 50%;
-            margin: auto;
-            padding: 20px;
-            border: 2px dashed #007bff;
-            background: #f8f9fa;
-            position: relative;
-            top: 20%;
-        }
-        .progress {
-            display: none;
-            width: 100%;
-            background: lightgray;
-        }
-        .progress-bar {
-            width: 0%;
-            height: 20px;
-            background: green;
-        }
-    </style>
+    <title>Upload CSV</title>
 </head>
 <body>
-    <h2>Upload URLs</h2>
-    <div class="container" id="drop-zone">
-        <input type="file" id="file-upload" />
-        <br><br>
-        <textarea id="text-input" placeholder="Paste URLs here..." rows="5" cols="50"></textarea>
-        <br><br>
-        <button onclick="uploadData()">Upload</button>
-    </div>
-
-    <div class="progress">
-        <div class="progress-bar" id="progress-bar"></div>
-    </div>
-
-    <div id="status"></div>
-
-    <script>
-        function uploadData() {
-            let fileInput = document.getElementById("file-upload").files[0];
-            let textInput = document.getElementById("text-input").value;
-
-            let formData = new FormData();
-            if (fileInput) {
-                formData.append("file", fileInput);
-            } else if (textInput.trim() !== "") {
-                formData.append("text_data", textInput);
-            } else {
-                alert("Please upload a file or paste URLs.");
-                return;
-            }
-
-            let xhr = new XMLHttpRequest();
-            xhr.open("POST", "/upload", true);
-
-            xhr.onload = function () {
-                let response = JSON.parse(this.responseText);
-                if (this.status === 202) {
-                    checkStatus(response.task_id);
-                } else {
-                    document.getElementById("status").innerText = "Error: " + response.error;
-                }
-            };
-
-            xhr.send(formData);
-            document.querySelector(".progress").style.display = "block";
-        }
-
-        function checkStatus(task_id) {
-            let interval = setInterval(function () {
-                fetch(`/task-status/${task_id}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.status === "Completed") {
-                            clearInterval(interval);
-                            document.getElementById("status").innerHTML = `<a href="${data.download_url}" download>Download Processed File</a>`;
-                        } else if (data.status === "Failed") {
-                            clearInterval(interval);
-                            document.getElementById("status").innerText = "Processing Failed: " + data.error;
-                        }
-                    });
-            }, 3000);
-        }
-    </script>
+    <h2>Upload CSV File</h2>
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="file">
+        <button type="submit">Upload</button>
+    </form>
 </body>
 </html>
