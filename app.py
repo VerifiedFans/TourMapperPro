@@ -15,7 +15,7 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 
 # ✅ Define Upload & Output Folders
-UPLOAD_FOLDER = "uploads"
+UPLOAD_FOLDER = "/tmp/uploads"
 OUTPUT_FOLDER = "geojsons"
 
 # ✅ Create Folders If They Don't Exist
