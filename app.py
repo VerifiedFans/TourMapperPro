@@ -39,15 +39,21 @@ gmaps = googlemaps.Client(key=GMAPS_API_KEY)
 def index():
     return render_template('index.html')
 
-# ✅ File Upload & Processing
+# ✅ File Upload & Processing (Only Accepts .CSV)
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
         return jsonify({'error': 'No file uploaded'}), 400
 
     file = request.files['file']
+    
+    # ✅ Check if a file was selected
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
+
+    # ✅ Check if the file is a CSV
+    if not file.filename.lower().endswith('.csv'):
+        return jsonify({'error': 'Invalid file format. Please upload a .csv file'}), 400
 
     try:
         filename = secure_filename(file.filename)
