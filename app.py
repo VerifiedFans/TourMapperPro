@@ -1,3 +1,4 @@
+
 import os
 import json
 import time
@@ -13,16 +14,14 @@ from werkzeug.utils import secure_filename
 # ✅ Define the Flask App
 app = Flask(__name__)
 
-# ✅ Upload Folder Setup
+# ✅ Define Upload & Output Folders
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "geojsons"
 
-# Create folders if they don't exist
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
-
-if not os.path.exists(OUTPUT_FOLDER):
-    os.makedirs(OUTPUT_FOLDER)
+# ✅ Create Folders If They Don't Exist
+for folder in [UPLOAD_FOLDER, OUTPUT_FOLDER]:
+    if not os.path.exists(folder):
+        os.makedirs(folder)
 
 # ✅ Redis Cache Setup
 try:
@@ -35,7 +34,7 @@ except Exception as e:
 GMAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "YOUR_API_KEY_HERE")
 gmaps = googlemaps.Client(key=GMAPS_API_KEY)
 
-# ✅ Home Page
+# ✅ Home Page Route
 @app.route('/')
 def index():
     return render_template('index.html')
