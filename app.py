@@ -1,4 +1,3 @@
-
 import os
 import json
 import time
@@ -14,9 +13,9 @@ from werkzeug.utils import secure_filename
 # ✅ Define the Flask App
 app = Flask(__name__)
 
-# ✅ Define Upload & Output Folders
+# ✅ Define Upload & Output Folders (Use /tmp/ for Heroku compatibility)
 UPLOAD_FOLDER = "/tmp/uploads"
-OUTPUT_FOLDER = "geojsons"
+OUTPUT_FOLDER = "/tmp/geojsons"
 
 # ✅ Create Folders If They Don't Exist
 for folder in [UPLOAD_FOLDER, OUTPUT_FOLDER]:
@@ -56,9 +55,14 @@ def upload_file():
         return jsonify({'error': 'Invalid file format. Please upload a .csv file'}), 400
 
     try:
+        # ✅ Create /tmp/uploads directory if it doesn’t exist
+        if not os.path.exists(UPLOAD_FOLDER):
+            os.makedirs(UPLOAD_FOLDER)
+
         filename = secure_filename(file.filename)
         file_path = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(file_path)
+
+        file.save(file_path)  # ✅ Save file to /tmp/uploads
 
         # ✅ Process the CSV file
         geojson_filename = process_csv(file_path)
