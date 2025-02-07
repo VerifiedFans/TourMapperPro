@@ -20,14 +20,22 @@ os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 # Google Maps API Key
 GMAPS_API_KEY = os.getenv("GMAPS_API_KEY")
 
-# Redis Cache Setup (Heroku Key-Value Store)
+# Redis Setup (Handle missing Redis gracefully)
 REDIS_URL = os.getenv("REDIS_URL")
-cache = redis.Redis.from_url(REDIS_URL) if REDIS_URL else None
+cache = None
+if REDIS_URL:
+    try:
+        cache = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        cache.ping()  # Test connection
+        print("✅ Redis connected")
+    except redis.ConnectionError:
+        print("⚠️ Redis connection failed. Running without cache.")
+        cache = None
 
 
-### 📍 Function: Get Venue Footprint from Google Places API ###
+### 📍 Get Venue Footprint using Google Places API ###
 def get_venue_footprint(lat, lon):
-    """Get venue polygon using Google Places API"""
+    """Retrieve venue polygon using Google Places API"""
     try:
         search_url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat},{lon}&radius=50&type=establishment&key={GMAPS_API_KEY}"
         response = requests.get(search_url).json()
@@ -51,9 +59,9 @@ def get_venue_footprint(lat, lon):
     return None
 
 
-### 🚗 Function: Get Parking Lot Area using Google Roads API ###
+### 🚗 Get Parking Lot Area using Google Roads API ###
 def get_parking_area(lat, lon):
-    """Estimate parking area without crossing main roads"""
+    """Estimate parking area near the venue"""
     try:
         roads_url = f"https://roads.googleapis.com/v1/nearestRoads?points={lat},{lon}&key={GMAPS_API_KEY}"
         data = requests.get(roads_url).json()
@@ -66,9 +74,9 @@ def get_parking_area(lat, lon):
     return None
 
 
-### 📄 Function: Process CSV and Create GeoJSON ###
+### 📄 Process CSV and Create GeoJSON ###
 def process_csv(csv_file):
-    """Reads CSV, finds venue footprint & parking lot, and saves as GeoJSON"""
+    """Reads CSV, geocodes addresses, and generates GeoJSON"""
     df = pd.read_csv(csv_file)
 
     required_columns = {'venue_name', 'address', 'city', 'state', 'zip', 'date'}
@@ -137,7 +145,7 @@ def process_csv(csv_file):
     with open(geojson_path, "w") as f:
         json.dump(geojson_data, f)
 
-    print(f"✅ GeoJSON saved as: {geojson_path}")
+    print(f"✅ GeoJSON saved as: {geojson_filename}")
     return geojson_filename
 
 
