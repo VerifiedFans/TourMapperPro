@@ -3,6 +3,8 @@ import json
 import time
 import pandas as pd
 import googlemaps
+GMAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "YOUR_API_KEY_HERE")
+gmaps = googlemaps.Client(key=GMAPS_API_KEY)
 import redis
 import geojson
 import traceback
