@@ -23,11 +23,20 @@ for folder in [UPLOAD_FOLDER, OUTPUT_FOLDER]:
         os.makedirs(folder)
 
 # ✅ Redis Cache Setup
-try:
-    cache = redis.Redis.from_url(os.getenv('REDIS_URL'), decode_responses=True)
-except Exception as e:
-    print(f"⚠️ Redis connection failed: {e}")
+# ✅ Improved Redis Connection Handling
+REDIS_URL = os.getenv('REDIS_URL')
+
+if REDIS_URL:
+    try:
+        cache = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        print("✅ Redis connected successfully")
+    except redis.exceptions.ConnectionError as e:
+        print(f"❌ Redis connection failed: {e}")
+        cache = None  # Prevents Redis from breaking the app
+else:
+    print("⚠️ No REDIS_URL found, running without caching")
     cache = None
+
 
 # ✅ Google Maps API Key
 GMAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "YOUR_API_KEY_HERE")
