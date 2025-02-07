@@ -79,7 +79,7 @@ def upload_file():
 # ✅ Process CSV and Generate GeoJSON
 def process_csv(csv_file):
     """Reads CSV, finds lat/lon, creates polygons, and saves GeoJSON"""
-    try:
+try:
     df = pd.read_csv(csv_file)
     print(f"✅ CSV Loaded: {csv_file}")
 except Exception as e:
