@@ -1,3 +1,4 @@
+
 import os
 import json
 import time
@@ -79,15 +80,16 @@ def upload_file():
 # ✅ Process CSV and Generate GeoJSON
 def process_csv(csv_file):
     """Reads CSV, finds lat/lon, creates polygons, and saves GeoJSON"""
-try:
-    df = pd.read_csv(csv_file)
-    print(f"✅ CSV Loaded: {csv_file}")
-except Exception as e:
-    print(f"❌ Error loading CSV: {e}")
-    return None  # Stops the function if CSV loading fails
+    try:
+        df = pd.read_csv(csv_file)
+        print(f"✅ CSV Loaded: {csv_file}")
+    except Exception as e:
+        print(f"❌ Error loading CSV: {e}")
+        return None  # ✅ Correctly inside function
 
     required_columns = {'venue_name', 'address', 'city', 'state', 'zip', 'date'}
     if not required_columns.issubset(df.columns):
+        print("⚠️ Missing required columns in CSV")
         return None
 
     features = []
