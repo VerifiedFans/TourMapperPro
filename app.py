@@ -1,4 +1,3 @@
-
 import os
 import json
 import time
@@ -88,8 +87,10 @@ def process_csv(csv_file):
         return None  # ✅ Correctly inside function
 
     required_columns = {'venue_name', 'address', 'city', 'state', 'zip', 'date'}
+    
+    # ✅ Debugging: Print actual CSV columns
     if not required_columns.issubset(df.columns):
-        print("⚠️ Missing required columns in CSV")
+        print(f"⚠️ Missing required columns! Found: {df.columns.tolist()}")
         return None
 
     features = []
