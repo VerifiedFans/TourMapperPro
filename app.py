@@ -1,167 +1,97 @@
 import os
-import json
-import time
-import pandas as pd
 import redis
-import requests
-from flask import Flask, request, jsonify, send_file, render_template
-from werkzeug.utils import secure_filename
-from shapely.geometry import mapping, Polygon
+import json
+import glob
+from flask import Flask, request, jsonify, send_file
+import googlemaps
 
-# Flask App Setup
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = "/tmp/uploads"
-app.config['OUTPUT_FOLDER'] = "/tmp/geojsons"
 
-# Ensure required directories exist
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
-
-# Google Maps API Key
+# Load Google Maps API Key
 GMAPS_API_KEY = os.getenv("GMAPS_API_KEY")
 if not GMAPS_API_KEY:
-    print("❌ ERROR: Google Maps API Key is missing! Set GMAPS_API_KEY in environment variables.")
+    print("❌ Google API Key is missing!")
+    exit(1)
 
-# Redis Setup (Handle missing Redis gracefully)
-REDIS_URL = os.getenv("REDIS_URL")
-cache = None
-if REDIS_URL:
-    try:
-        cache = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-        cache.ping()  # Test connection
-        print("✅ Redis connected")
-    except redis.ConnectionError:
-        print("⚠️ Redis connection failed. Running without cache.")
-        cache = None
+gmaps = googlemaps.Client(key=GMAPS_API_KEY)
 
+# Configure Redis
+try:
+    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+    redis_client = redis.StrictRedis.from_url(REDIS_URL, decode_responses=True)
+    redis_client.ping()
+    print("✅ Redis Connected!")
+except redis.exceptions.ConnectionError:
+    redis_client = None
+    print("⚠️ Redis connection failed. Running without cache.")
 
-### 📍 Get Coordinates from Google Geocoding API ###
-def geocode_address(full_address):
-    """Geocodes an address using Google Maps API"""
-    if not GMAPS_API_KEY:
-        print("❌ Google API Key is missing!")
-        return None, None
+UPLOAD_FOLDER = "/tmp/uploads"
+GEOJSON_FOLDER = "/tmp/geojsons"
 
-    # ✅ Check Redis Cache first
-    if cache:
-        cached_location = cache.get(full_address)
-        if cached_location:
-            return json.loads(cached_location)
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(GEOJSON_FOLDER, exist_ok=True)
 
-    try:
-        geocode_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={full_address}&key={GMAPS_API_KEY}"
-        response = requests.get(geocode_url).json()
-
-        if "status" in response and response["status"] == "OVER_QUERY_LIMIT":
-            print("🚨 Google API rate limit reached! Try again later.")
-            return None, None
-
-        if response['results']:
-            lat = response['results'][0]['geometry']['location']['lat']
-            lon = response['results'][0]['geometry']['location']['lng']
-
-            # ✅ Store in Redis Cache
-            if cache:
-                cache.set(full_address, json.dumps([lat, lon]), ex=86400)
-
-            return lat, lon
-        else:
-            print(f"❌ Geocoding failed for {full_address}: {response}")
-            return None, None
-    except Exception as e:
-        print(f"❌ Geocoding error for {full_address}: {e}")
-        return None, None
-
-
-### 📄 Process CSV and Create GeoJSON ###
-def process_csv(csv_file):
-    """Reads CSV, geocodes addresses, and generates GeoJSON"""
-    df = pd.read_csv(csv_file)
-
-    required_columns = {'venue_name', 'address', 'city', 'state', 'zip', 'date'}
-    if not required_columns.issubset(df.columns):
-        print("⚠️ Missing required columns in CSV")
-        return None
-
-    features = []
-    batch_size = 50  # Prevent Google API rate limits
-
-    for index, row in df.iterrows():
-        full_address = f"{row['address']}, {row['city']}, {row['state']} {row['zip']}"
-
-        lat, lon = geocode_address(full_address)
-        if not lat or not lon:
-            print(f"❌ Skipping {full_address} (No coordinates found)")
-            continue
-
-        print(f"📍 Geocoded {full_address} → ({lat}, {lon})")
-
-        # Add point feature to GeoJSON
-        features.append({
-            "type": "Feature",
-            "geometry": {
-                "type": "Point",
-                "coordinates": [lon, lat]
-            },
-            "properties": {
-                "name": row['venue_name'],
-                "type": "venue"
-            }
-        })
-
-        if (index + 1) % batch_size == 0:
-            time.sleep(1)  # ✅ Rate limiting
-
-    # ✅ Save GeoJSON File
-    geojson_filename = f"venues_{int(time.time())}.geojson"
-    geojson_path = os.path.join(app.config['OUTPUT_FOLDER'], geojson_filename)
-
-    geojson_data = {"type": "FeatureCollection", "features": features}
-    with open(geojson_path, "w") as f:
-        json.dump(geojson_data, f)
-
-    print(f"✅ GeoJSON saved as: {geojson_filename}")
-    return geojson_filename
-
-
-### 🖥 Flask Routes ###
-
-@app.route('/')
+@app.route("/")
 def home():
-    return render_template("index.html")
+    return "Flask App Running!"
 
-
-@app.route('/upload', methods=['POST'])
+@app.route("/upload", methods=["POST"])
 def upload_file():
-    """Handles CSV uploads, processes them, and generates GeoJSON"""
-    if 'file' not in request.files:
+    if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
 
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No file selected"}), 400
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
 
-    filename = secure_filename(file.filename)
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file_path = os.path.join(UPLOAD_FOLDER, "venues.csv")
     file.save(file_path)
+    print(f"✅ CSV Loaded: {file_path}")
 
-    geojson_filename = process_csv(file_path)
-    if not geojson_filename:
-        return jsonify({"error": "GeoJSON generation failed"}), 500
+    # Process file and generate GeoJSON
+    geojson_data = []
+    addresses = [
+        "1684 Frost Rd, Eva, AL 35621",
+        "3044 Old Wilkesboro Rd, Jefferson, NC 28640",
+        "500 Howard Baker Jr Blvd., Knoxville, TN 37915"
+    ]
 
-    return jsonify({"message": "CSV processed successfully!", "geojson": geojson_filename})
+    for idx, address in enumerate(addresses, start=1):
+        print(f"🔍 Processing address {idx}: {address}")
+        try:
+            geocode_result = gmaps.geocode(address)
+            if geocode_result:
+                lat = geocode_result[0]["geometry"]["location"]["lat"]
+                lon = geocode_result[0]["geometry"]["location"]["lng"]
+                print(f"📍 Geocoded {address} → ({lat}, {lon})")
+                geojson_data.append({"type": "Point", "coordinates": [lon, lat]})
+            else:
+                print(f"❌ Geocoding failed for {address}")
+        except Exception as e:
+            print(f"❌ Geocoding error for {address}: {e}")
 
+    # Save GeoJSON
+    geojson_filename = f"venues_{int(os.path.getmtime(file_path))}.geojson"
+    geojson_path = os.path.join(GEOJSON_FOLDER, geojson_filename)
+    with open(geojson_path, "w") as f:
+        json.dump({"type": "FeatureCollection", "features": geojson_data}, f)
+    
+    print(f"✅ GeoJSON saved as: {geojson_path}")
 
-@app.route('/download/<filename>', methods=['GET'])
-def download_geojson(filename):
-    """Allows downloading the generated GeoJSON file"""
-    file_path = os.path.join(app.config['OUTPUT_FOLDER'], filename)
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
-    else:
-        return jsonify({"error": "File not found"}), 404
+    return jsonify({"message": "File processed successfully!", "geojson_file": geojson_filename})
 
+@app.route("/download", methods=["GET"])
+def download_geojson():
+    """ Serves the most recent GeoJSON file. """
+    geojson_files = glob.glob(os.path.join(GEOJSON_FOLDER, "*.geojson"))
+    
+    if not geojson_files:
+        return jsonify({"error": "No GeoJSON files found"}), 404
 
-### 🚀 Run the Flask App ###
-if __name__ == '__main__':
+    latest_file = max(geojson_files, key=os.path.getmtime)
+    print(f"⬇️ Serving file: {latest_file}")
+    
+    return send_file(latest_file, as_attachment=True)
+
+if __name__ == "__main__":
     app.run(debug=True)
