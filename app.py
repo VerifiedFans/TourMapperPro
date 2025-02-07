@@ -22,25 +22,19 @@ for folder in [UPLOAD_FOLDER, OUTPUT_FOLDER]:
     if not os.path.exists(folder):
         os.makedirs(folder)
 
-# ✅ Redis Cache Setup
-# ✅ Improved Redis Connection Handling
-REDIS_URL = os.getenv('REDIS_URL')
+# ✅ Fix: Use "REDIS" instead of "REDIS_URL"
+REDIS_URL = os.getenv("REDIS")  # Using "REDIS" because that's how it's set up in Heroku
 
 if REDIS_URL:
     try:
         cache = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-        print("✅ Redis connected successfully")
+        print("✅ Redis connected successfully!")
     except redis.exceptions.ConnectionError as e:
         print(f"❌ Redis connection failed: {e}")
-        cache = None  # Prevents Redis from breaking the app
+        cache = None  # Prevent Redis from breaking the app
 else:
-    print("⚠️ No REDIS_URL found, running without caching")
+    print("⚠️ No REDIS found. Running without Redis cache.")
     cache = None
-
-
-# ✅ Google Maps API Key
-GMAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "YOUR_API_KEY_HERE")
-gmaps = googlemaps.Client(key=GMAPS_API_KEY)
 
 # ✅ Home Page Route
 @app.route('/')
