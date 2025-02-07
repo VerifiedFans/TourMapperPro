@@ -15,16 +15,21 @@ if not GMAPS_API_KEY:
 
 gmaps = googlemaps.Client(key=GMAPS_API_KEY)
 
-# Configure Redis
-try:
-    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-    redis_client = redis.StrictRedis.from_url(REDIS_URL, decode_responses=True)
-    redis_client.ping()
-    print("✅ Redis Connected!")
-except redis.exceptions.ConnectionError:
-    redis_client = None
-    print("⚠️ Redis connection failed. Running without cache.")
+# Configure Redis Connection
+REDIS_URL = os.getenv("REDIS_URL")
+redis_client = None
 
+if REDIS_URL:
+    try:
+        redis_client = redis.StrictRedis.from_url(REDIS_URL, decode_responses=True)
+        redis_client.ping()
+        print("✅ Redis Connected!")
+    except redis.exceptions.ConnectionError:
+        print("⚠️ Redis connection failed. Running without cache.")
+else:
+    print("⚠️ REDIS_URL is not set. Running without cache.")
+
+# Setup Folders
 UPLOAD_FOLDER = "/tmp/uploads"
 GEOJSON_FOLDER = "/tmp/geojsons"
 
@@ -32,11 +37,16 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(GEOJSON_FOLDER, exist_ok=True)
 
 def get_latest_geojson():
-    """Fetches the latest GeoJSON file from storage."""
+    """Fetches the latest GeoJSON file."""
     geojson_files = glob.glob(os.path.join(GEOJSON_FOLDER, "*.geojson"))
     if not geojson_files:
         return None
     return max(geojson_files, key=os.path.getmtime)
+
+# New Home Route (Fixes 404 Error)
+@app.route("/", methods=["GET"])
+def home():
+    return "<h1>Flask App Running!</h1><p>Upload CSV to generate GeoJSON.</p>"
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
