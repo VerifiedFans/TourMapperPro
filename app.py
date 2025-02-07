@@ -2,77 +2,73 @@ import os
 import json
 import time
 import pandas as pd
-import googlemaps
 import redis
-import geojson
-import traceback
-from flask import Flask, render_template, request, jsonify, send_file
-from shapely.geometry import Polygon, mapping
+import requests
+from flask import Flask, request, jsonify, send_file, render_template
 from werkzeug.utils import secure_filename
+from shapely.geometry import mapping, Polygon
 
-# ✅ Flask App Setup
+# Flask App Setup
 app = Flask(__name__)
-UPLOAD_FOLDER = "/tmp/uploads"
-OUTPUT_FOLDER = "/tmp/geojsons"
+app.config['UPLOAD_FOLDER'] = "/tmp/uploads"
+app.config['OUTPUT_FOLDER'] = "/tmp/geojsons"
 
-# ✅ Ensure directories exist
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+# Ensure required directories exist
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 
-# ✅ Redis Cache Setup (Fixes connection issues)
+# Google Maps API Key
+GMAPS_API_KEY = os.getenv("GMAPS_API_KEY")
+
+# Redis Cache Setup (Heroku Key-Value Store)
 REDIS_URL = os.getenv("REDIS_URL")
+cache = redis.Redis.from_url(REDIS_URL) if REDIS_URL else None
 
-cache = None  # Default to no Redis
-if REDIS_URL:
+
+### 📍 Function: Get Venue Footprint from Google Places API ###
+def get_venue_footprint(lat, lon):
+    """Get venue polygon using Google Places API"""
     try:
-        cache = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-        cache.ping()  # Test Redis connection
-        print("✅ Redis connected successfully!")
+        search_url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat},{lon}&radius=50&type=establishment&key={GMAPS_API_KEY}"
+        response = requests.get(search_url).json()
+
+        if "results" in response and response["results"]:
+            place_id = response["results"][0]["place_id"]
+            details_url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&fields=geometry&key={GMAPS_API_KEY}"
+            details_data = requests.get(details_url).json()
+
+            if "result" in details_data and "geometry" in details_data["result"]:
+                viewport = details_data["result"]["geometry"]["viewport"]
+                return Polygon([
+                    (viewport["southwest"]["lng"], viewport["southwest"]["lat"]),
+                    (viewport["northeast"]["lng"], viewport["southwest"]["lat"]),
+                    (viewport["northeast"]["lng"], viewport["northeast"]["lat"]),
+                    (viewport["southwest"]["lng"], viewport["northeast"]["lat"]),
+                    (viewport["southwest"]["lng"], viewport["southwest"]["lat"])
+                ])
     except Exception as e:
-        print(f"⚠️ Redis connection failed: {e}")
-        cache = None
-else:
-    print("⚠️ No REDIS_URL found. Running without Redis cache.")
+        print(f"❌ Venue footprint error: {e}")
+    return None
 
-# ✅ Google Maps API Key
-GMAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "YOUR_API_KEY_HERE")
-gmaps = googlemaps.Client(key=GMAPS_API_KEY)
 
-# ✅ Home Page
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-# ✅ File Upload & Processing
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-
+### 🚗 Function: Get Parking Lot Area using Google Roads API ###
+def get_parking_area(lat, lon):
+    """Estimate parking area without crossing main roads"""
     try:
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(file_path)
+        roads_url = f"https://roads.googleapis.com/v1/nearestRoads?points={lat},{lon}&key={GMAPS_API_KEY}"
+        data = requests.get(roads_url).json()
 
-        # ✅ Process the CSV file
-        geojson_filename = process_csv(file_path)
-
-        if not geojson_filename:
-            raise ValueError("GeoJSON generation failed")
-
-        return jsonify({'status': 'completed', 'file': geojson_filename})
-
+        if "snappedPoints" in data and data["snappedPoints"]:
+            road_points = [(p["location"]["longitude"], p["location"]["latitude"]) for p in data["snappedPoints"]]
+            return Polygon(road_points)
     except Exception as e:
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        print(f"❌ Parking area error: {e}")
+    return None
 
-# ✅ Process CSV → Convert to GeoJSON
+
+### 📄 Function: Process CSV and Create GeoJSON ###
 def process_csv(csv_file):
-    """Reads CSV, finds lat/lon, creates polygons, and saves GeoJSON"""
+    """Reads CSV, finds venue footprint & parking lot, and saves as GeoJSON"""
     df = pd.read_csv(csv_file)
 
     required_columns = {'venue_name', 'address', 'city', 'state', 'zip', 'date'}
@@ -81,26 +77,27 @@ def process_csv(csv_file):
         return None
 
     features = []
-    batch_size = 50  # Batch size for rate limiting
-    
+    batch_size = 50  # Prevent Google API rate limits
+
     for index, row in df.iterrows():
         full_address = f"{row['address']}, {row['city']}, {row['state']} {row['zip']}"
-        lat, lon = None, None
 
-        # ✅ Check Redis Cache
+        # ✅ Check Redis Cache for geolocation
+        lat, lon = None, None
         if cache:
             cached_location = cache.get(full_address)
             if cached_location:
                 lat, lon = json.loads(cached_location)
-        
+
         if not lat or not lon:
             try:
-                geocode_result = gmaps.geocode(full_address)
-                if not geocode_result:
+                geocode_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={full_address}&key={GMAPS_API_KEY}"
+                geocode_result = requests.get(geocode_url).json()
+                if not geocode_result['results']:
                     print(f"❌ Geocoding failed for {full_address}")
                     continue
-                lat = geocode_result[0]['geometry']['location']['lat']
-                lon = geocode_result[0]['geometry']['location']['lng']
+                lat = geocode_result['results'][0]['geometry']['location']['lat']
+                lon = geocode_result['results'][0]['geometry']['location']['lng']
                 if cache:
                     cache.set(full_address, json.dumps([lat, lon]), ex=86400)
                 print(f"📍 Geocoded {full_address} → ({lat}, {lon})")
@@ -108,43 +105,34 @@ def process_csv(csv_file):
                 print(f"❌ Geocoding error for {full_address}: {e}")
                 continue
 
-        # ✅ Create Venue Polygon
-        venue_poly = Polygon([
-            (lon - 0.0005, lat - 0.0005),
-            (lon + 0.0005, lat - 0.0005),
-            (lon + 0.0005, lat + 0.0005),
-            (lon - 0.0005, lat + 0.0005),
-            (lon - 0.0005, lat - 0.0005)
-        ])
+        # ✅ Get Venue Footprint
+        venue_polygon = get_venue_footprint(lat, lon)
 
-        # ✅ Create Parking Polygon
-        parking_poly = Polygon([
-            (lon - 0.001, lat - 0.001),
-            (lon + 0.001, lat - 0.001),
-            (lon + 0.001, lat + 0.001),
-            (lon - 0.001, lat + 0.001),
-            (lon - 0.001, lat - 0.001)
-        ])
+        # ✅ Get Parking Lot Polygon
+        parking_polygon = get_parking_area(lat, lon)
 
-        # ✅ Combine venue & parking into GeoJSON Feature
-        features.append({
-            "type": "Feature",
-            "geometry": mapping(venue_poly),
-            "properties": {"name": row['venue_name'], "type": "venue"}
-        })
-        features.append({
-            "type": "Feature",
-            "geometry": mapping(parking_poly),
-            "properties": {"name": row['venue_name'], "type": "parking"}
-        })
-        
+        # ✅ Save Venue & Parking Polygons
+        if venue_polygon:
+            features.append({
+                "type": "Feature",
+                "geometry": mapping(venue_polygon),
+                "properties": {"name": row['venue_name'], "type": "venue"}
+            })
+
+        if parking_polygon:
+            features.append({
+                "type": "Feature",
+                "geometry": mapping(parking_polygon),
+                "properties": {"name": row['venue_name'], "type": "parking"}
+            })
+
         if (index + 1) % batch_size == 0:
-            time.sleep(1)  # ✅ Rate limiting for Google API
+            time.sleep(1)  # ✅ Rate limiting
 
     # ✅ Save GeoJSON File
     geojson_filename = f"venues_{int(time.time())}.geojson"
-    geojson_path = os.path.join(OUTPUT_FOLDER, geojson_filename)
-    
+    geojson_path = os.path.join(app.config['OUTPUT_FOLDER'], geojson_filename)
+
     geojson_data = {"type": "FeatureCollection", "features": features}
     with open(geojson_path, "w") as f:
         json.dump(geojson_data, f)
@@ -152,25 +140,45 @@ def process_csv(csv_file):
     print(f"✅ GeoJSON saved as: {geojson_path}")
     return geojson_filename
 
-# ✅ Download GeoJSON File
-@app.route('/download')
-def download_file():
-    try:
-        # Get the most recent GeoJSON file
-        files = sorted(os.listdir(OUTPUT_FOLDER), reverse=True)
-        if not files:
-            raise FileNotFoundError("No GeoJSON files found.")
-        
-        latest_geojson = files[0]
-        geojson_path = os.path.join(OUTPUT_FOLDER, latest_geojson)
 
-        print(f"📥 Downloading file: {geojson_path}")
-        return send_file(geojson_path, as_attachment=True)
-    except Exception as e:
-        print(f"❌ Download error: {e}")
-        return jsonify({"error": str(e)}), 500
+### 🖥 Flask Routes ###
 
-# ✅ Run the App
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Ensure it runs on Heroku
-    app.run(debug=True, host="0.0.0.0", port=port)
+@app.route('/')
+def home():
+    return render_template("index.html")
+
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    """Handles CSV uploads, processes them, and generates GeoJSON"""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    filename = secure_filename(file.filename)
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(file_path)
+
+    geojson_filename = process_csv(file_path)
+    if not geojson_filename:
+        return jsonify({"error": "GeoJSON generation failed"}), 500
+
+    return jsonify({"message": "CSV processed successfully!", "geojson": geojson_filename})
+
+
+@app.route('/download/<filename>', methods=['GET'])
+def download_geojson(filename):
+    """Allows downloading the generated GeoJSON file"""
+    file_path = os.path.join(app.config['OUTPUT_FOLDER'], filename)
+    if os.path.exists(file_path):
+        return send_file(file_path, as_attachment=True)
+    else:
+        return jsonify({"error": "File not found"}), 404
+
+
+### 🚀 Run the Flask App ###
+if __name__ == '__main__':
+    app.run(debug=True)
