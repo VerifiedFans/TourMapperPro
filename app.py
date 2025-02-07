@@ -3,114 +3,121 @@ import redis
 import googlemaps
 import csv
 import json
-from flask import Flask, request, send_from_directory, render_template
-from werkzeug.utils import secure_filename
+from flask import Flask, request, jsonify, send_file, render_template
 
 # Load environment variables
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+REDIS_URL = os.getenv("REDIS_URL")
 GOOGLE_MAPS_API_KEY = os.getenv("GMAPS_API_KEY")
 
-# Ensure API key is set
-if not GOOGLE_MAPS_API_KEY:
-    raise ValueError("❌ Google Maps API Key is missing! Set GMAPS_API_KEY in Heroku.")
-
-# Connect to Redis
-try:
-    redis_client = redis.StrictRedis.from_url(REDIS_URL, decode_responses=True, ssl=True)
-    redis_client.ping()
-    print("✅ Connected to Redis!")
-except redis.ConnectionError:
-    print("❌ Redis connection failed. Running without cache.")
-    redis_client = None
-
-# Initialize Flask & Google Maps
 app = Flask(__name__)
-gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
 
-# File storage paths
-UPLOAD_FOLDER = "/tmp/uploads"
-GEOJSON_FOLDER = "/tmp/geojsons"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(GEOJSON_FOLDER, exist_ok=True)
+# ✅ Initialize Redis with error handling
+if not REDIS_URL:
+    print("❌ No REDIS_URL found! Running without Redis.")
+    redis_client = None
+else:
+    try:
+        redis_client = redis.StrictRedis.from_url(REDIS_URL, decode_responses=True, ssl=True)
+        redis_client.ping()  # Test connection
+        print("✅ Connected to Redis!")
+    except redis.ConnectionError:
+        print("❌ Redis connection failed. Running without cache.")
+        redis_client = None
 
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+# ✅ Initialize Google Maps Client
+if not GOOGLE_MAPS_API_KEY:
+    print("❌ Google API Key is missing!")
+    gmaps = None
+else:
+    gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
+    print("✅ Google Maps API initialized!")
 
-
-# 📌 Home Route
-@app.route("/")
+# ✅ Route to render home page
+@app.route('/')
 def home():
     return """
     <h1>Flask App Running!</h1>
     <p>Upload CSV to generate GeoJSON.</p>
-    <form action='/upload' method='post' enctype='multipart/form-data'>
-        <input type='file' name='file'>
-        <input type='submit' value='Upload'>
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="file">
+        <button type="submit">Upload</button>
     </form>
     """
 
+# ✅ Upload CSV and generate GeoJSON
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return "No file uploaded", 400
 
-# 📌 Upload Route
-@app.route("/upload", methods=["POST"])
-def upload():
-    file = request.files.get("file")
-    if not file:
-        return "❌ No file uploaded", 400
+    file = request.files['file']
+    if file.filename == '':
+        return "No selected file", 400
 
-    filename = secure_filename(file.filename)
-    filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    file.save(filepath)
+    addresses = []
+    geojson_data = {"type": "FeatureCollection", "features": []}
 
-    # Process CSV and generate GeoJSON
-    geojson_filename = process_csv(filepath)
-    return f"✅ GeoJSON generated: <a href='/download/{geojson_filename}'>Download</a>"
+    csv_reader = csv.DictReader(file.read().decode("utf-8").splitlines())
 
+    for row in csv_reader:
+        address = row.get("address")  # Ensure your CSV has an "address" column
+        if not address:
+            continue
 
-# 📌 Process CSV and Generate GeoJSON
-def process_csv(filepath):
-    features = []
-    with open(filepath, "r") as csv_file:
-        reader = csv.reader(csv_file)
-        next(reader)  # Skip header
+        if redis_client:
+            cached_coords = redis_client.get(address)
+            if cached_coords:
+                lat, lng = map(float, cached_coords.split(","))
+                print(f"📍 [Cache] {address} → ({lat}, {lng})")
+            else:
+                lat, lng = geocode_address(address)
+                if lat and lng:
+                    redis_client.set(address, f"{lat},{lng}")
+        else:
+            lat, lng = geocode_address(address)
 
-        for row in reader:
-            address = row[0]
-            try:
-                geocode_result = gmaps.geocode(address)
-                if geocode_result:
-                    lat = geocode_result[0]["geometry"]["location"]["lat"]
-                    lng = geocode_result[0]["geometry"]["location"]["lng"]
-                    features.append({
-                        "type": "Feature",
-                        "geometry": {"type": "Point", "coordinates": [lng, lat]},
-                        "properties": {"address": address},
-                    })
-                    print(f"📍 Geocoded {address} → ({lat}, {lng})")
-                else:
-                    print(f"⚠️ No geocode result for {address}")
-            except Exception as e:
-                print(f"❌ Geocoding failed for {address}: {e}")
+        if lat and lng:
+            geojson_data["features"].append({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lng, lat]},
+                "properties": {"address": address}
+            })
 
-    geojson_data = {"type": "FeatureCollection", "features": features}
-    geojson_filename = f"venues_{int(os.path.getmtime(filepath))}.geojson"
-    geojson_path = os.path.join(GEOJSON_FOLDER, geojson_filename)
+    output_filename = "venues.geojson"
+    with open(output_filename, "w") as f:
+        json.dump(geojson_data, f)
 
-    # Save GeoJSON
-    with open(geojson_path, "w") as geojson_file:
-        json.dump(geojson_data, geojson_file)
-    print(f"✅ GeoJSON saved as: {geojson_filename}")
+    print(f"✅ GeoJSON saved as: {output_filename}")
+    return jsonify({"message": "File processed successfully", "download_url": "/download"})
 
-    return geojson_filename
+# ✅ Download the generated GeoJSON file
+@app.route('/download', methods=['GET'])
+def download_file():
+    try:
+        return send_file("venues.geojson", as_attachment=True)
+    except Exception as e:
+        return str(e), 500
 
+# ✅ Geocode address using Google Maps API
+def geocode_address(address):
+    if not gmaps:
+        print(f"❌ Skipping {address} (Google API Key missing)")
+        return None, None
 
-# 📌 Download GeoJSON Route
-@app.route("/download/<filename>")
-def download(filename):
-    filepath = os.path.join(GEOJSON_FOLDER, filename)
-    if os.path.exists(filepath):
-        return send_from_directory(GEOJSON_FOLDER, filename, as_attachment=True)
-    return "❌ File not found", 404
+    try:
+        geocode_result = gmaps.geocode(address)
+        if geocode_result:
+            location = geocode_result[0]["geometry"]["location"]
+            lat, lng = location["lat"], location["lng"]
+            print(f"📍 Geocoded {address} → ({lat}, {lng})")
+            return lat, lng
+        else:
+            print(f"❌ Geocoding failed for {address}")
+            return None, None
+    except Exception as e:
+        print(f"⚠️ Error geocoding {address}: {e}")
+        return None, None
 
-
-# Run the Flask app
-if __name__ == "__main__":
+# ✅ Run the Flask app
+if __name__ == '__main__':
     app.run(debug=True)
