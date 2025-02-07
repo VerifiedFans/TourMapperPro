@@ -19,6 +19,8 @@ os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 
 # Google Maps API Key
 GMAPS_API_KEY = os.getenv("GMAPS_API_KEY")
+if not GMAPS_API_KEY:
+    print("❌ ERROR: Google Maps API Key is missing! Set GMAPS_API_KEY in environment variables.")
 
 # Redis Setup (Handle missing Redis gracefully)
 REDIS_URL = os.getenv("REDIS_URL")
@@ -33,45 +35,42 @@ if REDIS_URL:
         cache = None
 
 
-### 📍 Get Venue Footprint using Google Places API ###
-def get_venue_footprint(lat, lon):
-    """Retrieve venue polygon using Google Places API"""
+### 📍 Get Coordinates from Google Geocoding API ###
+def geocode_address(full_address):
+    """Geocodes an address using Google Maps API"""
+    if not GMAPS_API_KEY:
+        print("❌ Google API Key is missing!")
+        return None, None
+
+    # ✅ Check Redis Cache first
+    if cache:
+        cached_location = cache.get(full_address)
+        if cached_location:
+            return json.loads(cached_location)
+
     try:
-        search_url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat},{lon}&radius=50&type=establishment&key={GMAPS_API_KEY}"
-        response = requests.get(search_url).json()
+        geocode_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={full_address}&key={GMAPS_API_KEY}"
+        response = requests.get(geocode_url).json()
 
-        if "results" in response and response["results"]:
-            place_id = response["results"][0]["place_id"]
-            details_url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&fields=geometry&key={GMAPS_API_KEY}"
-            details_data = requests.get(details_url).json()
+        if "status" in response and response["status"] == "OVER_QUERY_LIMIT":
+            print("🚨 Google API rate limit reached! Try again later.")
+            return None, None
 
-            if "result" in details_data and "geometry" in details_data["result"]:
-                viewport = details_data["result"]["geometry"]["viewport"]
-                return Polygon([
-                    (viewport["southwest"]["lng"], viewport["southwest"]["lat"]),
-                    (viewport["northeast"]["lng"], viewport["southwest"]["lat"]),
-                    (viewport["northeast"]["lng"], viewport["northeast"]["lat"]),
-                    (viewport["southwest"]["lng"], viewport["northeast"]["lat"]),
-                    (viewport["southwest"]["lng"], viewport["southwest"]["lat"])
-                ])
+        if response['results']:
+            lat = response['results'][0]['geometry']['location']['lat']
+            lon = response['results'][0]['geometry']['location']['lng']
+
+            # ✅ Store in Redis Cache
+            if cache:
+                cache.set(full_address, json.dumps([lat, lon]), ex=86400)
+
+            return lat, lon
+        else:
+            print(f"❌ Geocoding failed for {full_address}: {response}")
+            return None, None
     except Exception as e:
-        print(f"❌ Venue footprint error: {e}")
-    return None
-
-
-### 🚗 Get Parking Lot Area using Google Roads API ###
-def get_parking_area(lat, lon):
-    """Estimate parking area near the venue"""
-    try:
-        roads_url = f"https://roads.googleapis.com/v1/nearestRoads?points={lat},{lon}&key={GMAPS_API_KEY}"
-        data = requests.get(roads_url).json()
-
-        if "snappedPoints" in data and data["snappedPoints"]:
-            road_points = [(p["location"]["longitude"], p["location"]["latitude"]) for p in data["snappedPoints"]]
-            return Polygon(road_points)
-    except Exception as e:
-        print(f"❌ Parking area error: {e}")
-    return None
+        print(f"❌ Geocoding error for {full_address}: {e}")
+        return None, None
 
 
 ### 📄 Process CSV and Create GeoJSON ###
@@ -90,49 +89,25 @@ def process_csv(csv_file):
     for index, row in df.iterrows():
         full_address = f"{row['address']}, {row['city']}, {row['state']} {row['zip']}"
 
-        # ✅ Check Redis Cache for geolocation
-        lat, lon = None, None
-        if cache:
-            cached_location = cache.get(full_address)
-            if cached_location:
-                lat, lon = json.loads(cached_location)
-
+        lat, lon = geocode_address(full_address)
         if not lat or not lon:
-            try:
-                geocode_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={full_address}&key={GMAPS_API_KEY}"
-                geocode_result = requests.get(geocode_url).json()
-                if not geocode_result['results']:
-                    print(f"❌ Geocoding failed for {full_address}")
-                    continue
-                lat = geocode_result['results'][0]['geometry']['location']['lat']
-                lon = geocode_result['results'][0]['geometry']['location']['lng']
-                if cache:
-                    cache.set(full_address, json.dumps([lat, lon]), ex=86400)
-                print(f"📍 Geocoded {full_address} → ({lat}, {lon})")
-            except Exception as e:
-                print(f"❌ Geocoding error for {full_address}: {e}")
-                continue
+            print(f"❌ Skipping {full_address} (No coordinates found)")
+            continue
 
-        # ✅ Get Venue Footprint
-        venue_polygon = get_venue_footprint(lat, lon)
+        print(f"📍 Geocoded {full_address} → ({lat}, {lon})")
 
-        # ✅ Get Parking Lot Polygon
-        parking_polygon = get_parking_area(lat, lon)
-
-        # ✅ Save Venue & Parking Polygons
-        if venue_polygon:
-            features.append({
-                "type": "Feature",
-                "geometry": mapping(venue_polygon),
-                "properties": {"name": row['venue_name'], "type": "venue"}
-            })
-
-        if parking_polygon:
-            features.append({
-                "type": "Feature",
-                "geometry": mapping(parking_polygon),
-                "properties": {"name": row['venue_name'], "type": "parking"}
-            })
+        # Add point feature to GeoJSON
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [lon, lat]
+            },
+            "properties": {
+                "name": row['venue_name'],
+                "type": "venue"
+            }
+        })
 
         if (index + 1) % batch_size == 0:
             time.sleep(1)  # ✅ Rate limiting
