@@ -24,11 +24,22 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # ✅ Redis Cache Setup
 try:
-    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-    cache = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-except Exception as e:
-    print(f"⚠️ Redis connection failed: {e}")
-    cache = None
+# ✅ Redis Cache Setup
+REDIS_URL = os.getenv("REDIS_URL")
+
+cache = None  # Default to no Redis
+
+if REDIS_URL:
+    try:
+        cache = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        cache.ping()  # Test connection
+        print("✅ Redis connected successfully!")
+    except Exception as e:
+        print(f"⚠️ Redis connection failed: {e}")
+        cache = None
+else:
+    print("⚠️ No REDIS_URL found. Running without Redis cache.")
+
 
 # ✅ Google Maps API Key
 GMAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "YOUR_API_KEY_HERE")
