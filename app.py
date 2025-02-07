@@ -31,33 +31,6 @@ GEOJSON_FOLDER = "/tmp/geojsons"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(GEOJSON_FOLDER, exist_ok=True)
 
-# HTML TEMPLATE
-HTML_PAGE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>CSV to GeoJSON Converter</title>
-</head>
-<body>
-    <h2>Upload a CSV File</h2>
-    <form action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="file" required>
-        <input type="submit" value="Upload">
-    </form>
-
-    {% if geojson_file %}
-    <h3>✅ File processed successfully!</h3>
-    <a href="/download">Download GeoJSON</a>
-    {% endif %}
-</body>
-</html>
-"""
-
-@app.route("/")
-def home():
-    latest_geojson = get_latest_geojson()
-    return render_template_string(HTML_PAGE, geojson_file=latest_geojson)
-
 def get_latest_geojson():
     """Fetches the latest GeoJSON file from storage."""
     geojson_files = glob.glob(os.path.join(GEOJSON_FOLDER, "*.geojson"))
@@ -108,7 +81,7 @@ def upload_file():
     
     print(f"✅ GeoJSON saved as: {geojson_path}")
 
-    return render_template_string(HTML_PAGE, geojson_file=geojson_filename)
+    return jsonify({"success": True, "geojson_file": geojson_filename})
 
 @app.route("/download", methods=["GET"])
 def download_geojson():
