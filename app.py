@@ -1,138 +1,127 @@
 import os
-import csv
 import json
-import requests
 import redis
-import googlemaps
-from flask import Flask, request, render_template, send_file
-from werkzeug.utils import secure_filename
+import requests
+from flask import Flask, request, jsonify
 
-# Flask App Setup
+# Initialize Flask App
 app = Flask(__name__)
 
-# Load Environment Variables
+# Load environment variables
 REDIS_URL = os.getenv("REDIS_URL")
 GMAPS_API_KEY = os.getenv("GMAPS_API_KEY")
 
-# Redis Client (with SSL enabled)
-redis_client = redis.StrictRedis.from_url(REDIS_URL, decode_responses=True, ssl=True)
+# Ensure required environment variables are set
+if not REDIS_URL:
+    raise ValueError("ERROR: REDIS_URL is not set. Check your Heroku config vars.")
 
-# Google Maps Client
-gmaps = googlemaps.Client(key=GMAPS_API_KEY)
+if not GMAPS_API_KEY:
+    raise ValueError("ERROR: GMAPS_API_KEY is not set. Check your Heroku config vars.")
 
-# Allowed Upload Folder
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+# Initialize Redis client
+try:
+    redis_client = redis.StrictRedis.from_url(REDIS_URL, decode_responses=True, ssl=True)
+except Exception as e:
+    raise ValueError(f"Failed to connect to Redis: {str(e)}")
 
-# Allowed Extensions
-ALLOWED_EXTENSIONS = {"csv"}
 
-# Function to Check File Extension
-def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+### 1️⃣ Route: Home Page
+@app.route("/")
+def home():
+    return jsonify({"message": "Welcome to TourMapperPro API!"})
 
-# Function to Geocode Address (Uses Redis Cache)
-def geocode_address(address):
-    cached_result = redis_client.get(address)
-    if cached_result:
-        return json.loads(cached_result)
 
-    geocode_result = gmaps.geocode(address)
-    if geocode_result:
-        location = geocode_result[0]["geometry"]["location"]
-        redis_client.setex(address, 86400, json.dumps(location))  # Cache for 24 hours
-        return location
-    return None
+### 2️⃣ Route: Get Lat/Lon from Address using Google Maps API
+@app.route("/get-coordinates", methods=["POST"])
+def get_coordinates():
+    data = request.json
+    address = data.get("address")
 
-# Function to Get Venue Footprint from OpenStreetMap
-def get_venue_footprint(lat, lon):
-    query = f"""
-    [out:json];
-    way(around:50,{lat},{lon})["building"];
-    out geom;
-    """
-    url = "https://overpass-api.de/api/interpreter"
-    response = requests.get(url, params={"data": query})
+    if not address:
+        return jsonify({"error": "Missing address"}), 400
 
-    if response.status_code == 200:
-        data = response.json()
-        if "elements" in data and data["elements"]:
-            footprints = []
-            for element in data["elements"]:
-                if "geometry" in element:
-                    coords = [(node["lon"], node["lat"]) for node in element["geometry"]]
-                    footprints.append(coords)
-            return footprints
-    return None
+    try:
+        # Call Google Maps Geocoding API
+        response = requests.get(
+            f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={GMAPS_API_KEY}"
+        )
+        geocode_data = response.json()
 
-# Route: Home Page (File Upload Form)
-@app.route("/", methods=["GET", "POST"])
-def upload_file():
-    if request.method == "POST":
-        file = request.files["file"]
-        if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-            file.save(filepath)
-            return process_csv(filepath)
-    return """
-    <!doctype html>
-    <html>
-    <body>
-        <h2>Upload CSV to Generate GeoJSON</h2>
-        <form method="post" enctype="multipart/form-data">
-            <input type="file" name="file">
-            <input type="submit" value="Upload">
-        </form>
-    </body>
-    </html>
-    """
+        if geocode_data["status"] != "OK":
+            return jsonify({"error": "Failed to retrieve coordinates"}), 500
 
-# Function to Process CSV & Convert to GeoJSON
-def process_csv(filepath):
-    geojson_data = {"type": "FeatureCollection", "features": []}
+        location = geocode_data["results"][0]["geometry"]["location"]
+        lat, lon = location["lat"], location["lng"]
+
+        return jsonify({"address": address, "latitude": lat, "longitude": lon})
+
+    except Exception as e:
+        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
+
+
+### 3️⃣ Route: Store & Retrieve Data from Redis
+@app.route("/store-data", methods=["POST"])
+def store_data():
+    data = request.json
+    key = data.get("key")
+    value = data.get("value")
+
+    if not key or not value:
+        return jsonify({"error": "Missing key or value"}), 400
+
+    redis_client.set(key, json.dumps(value))
+    return jsonify({"message": "Data stored successfully"})
+
+
+@app.route("/get-data/<key>", methods=["GET"])
+def get_data(key):
+    value = redis_client.get(key)
     
-    with open(filepath, newline="", encoding="utf-8") as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            address = row.get("address")  # Ensure CSV has an "address" column
-            if address:
-                coords = geocode_address(address)
-                if coords:
-                    # Get venue footprint
-                    footprints = get_venue_footprint(coords["lat"], coords["lng"])
+    if not value:
+        return jsonify({"error": "Data not found"}), 404
 
-                    if footprints:
-                        # Store footprint as a polygon
-                        for footprint in footprints:
-                            feature = {
-                                "type": "Feature",
-                                "geometry": {"type": "Polygon", "coordinates": [footprint]},
-                                "properties": row
-                            }
-                            geojson_data["features"].append(feature)
-                    else:
-                        # Store as a point if no footprint is found
-                        feature = {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [coords["lng"], coords["lat"]]},
-                            "properties": row
-                        }
-                        geojson_data["features"].append(feature)
+    return jsonify({"key": key, "value": json.loads(value)})
 
-    output_filepath = os.path.join(app.config["UPLOAD_FOLDER"], "output.geojson")
-    with open(output_filepath, "w", encoding="utf-8") as geojson_file:
-        json.dump(geojson_data, geojson_file, indent=4)
 
-    return f'<a href="/download">Download GeoJSON</a>'
+### 4️⃣ Route: Draw Building Footprint Polygons (GeoJSON Format)
+@app.route("/get-building-footprint", methods=["POST"])
+def get_building_footprint():
+    data = request.json
+    address = data.get("address")
 
-# Route: Download GeoJSON File
-@app.route("/download")
-def download_file():
-    output_filepath = os.path.join(app.config["UPLOAD_FOLDER"], "output.geojson")
-    return send_file(output_filepath, as_attachment=True)
+    if not address:
+        return jsonify({"error": "Missing address"}), 400
 
-# Run the App
+    try:
+        # Call Google Maps API for building footprints (imaginary API for now)
+        # In a real-world case, use a third-party GIS provider like OpenStreetMap Overpass API
+        geojson_data = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [-73.985130, 40.748817],  # Example coordinates for a footprint
+                                [-73.985000, 40.748700],
+                                [-73.984800, 40.748900],
+                                [-73.985130, 40.748817]
+                            ]
+                        ]
+                    },
+                    "properties": {"name": "Example Building"}
+                }
+            ]
+        }
+
+        return jsonify(geojson_data)
+
+    except Exception as e:
+        return jsonify({"error": f"Failed to retrieve building footprint: {str(e)}"}), 500
+
+
+# Run Flask App (Locally)
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
