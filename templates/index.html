@@ -41,10 +41,8 @@
             fetch("/upload", { method: "POST", body: formData })
                 .then(response => response.json())
                 .then(data => { 
-                    alert(data.message);
-                    if (data.status === "completed") {
-                        listenForProgress();
-                    }
+                    alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); 
+                    updateProgress();
                 })
                 .catch(error => console.error("Error:", error));
         }
@@ -59,26 +57,30 @@
             fetch("/upload", { method: "POST", body: formData })
                 .then(response => response.json())
                 .then(data => { 
-                    alert(data.message);
-                    if (data.status === "completed") {
-                        listenForProgress();
-                    }
+                    alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); 
+                    updateProgress();
                 })
                 .catch(error => console.error("Error:", error));
         }
 
-        function listenForProgress() {
-            const eventSource = new EventSource("/progress");
-            eventSource.onmessage = function(event) {
-                let data = JSON.parse(event.data);
-                let progressBar = document.getElementById("progressBar");
-                progressBar.style.width = data.progress + "%";
-                progressBar.innerText = data.progress + "%";
+        function updateProgress() {
+            const progressBar = document.getElementById("progressBar");
 
-                if (data.progress >= 100) {
-                    eventSource.close();
-                }
-            };
+            function checkProgress() {
+                fetch("/progress")
+                    .then(response => response.json())
+                    .then(data => {
+                        progressBar.style.width = data.progress + "%";
+                        progressBar.innerText = data.progress + "%";
+
+                        if (data.progress < 100) {
+                            setTimeout(checkProgress, 1000);
+                        } else {
+                            alert("Processing Complete!");
+                        }
+                    });
+            }
+            checkProgress();
         }
 
         document.getElementById("dropArea").addEventListener("drop", function(event) {
@@ -90,10 +92,8 @@
             fetch("/upload", { method: "POST", body: formData })
                 .then(response => response.json())
                 .then(data => { 
-                    alert(data.message);
-                    if (data.status === "completed") {
-                        listenForProgress();
-                    }
+                    alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); 
+                    updateProgress();
                 })
                 .catch(error => console.error("Error:", error));
         });
