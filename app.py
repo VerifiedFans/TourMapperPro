@@ -1,110 +1,87 @@
 import os
-import redis
 import json
 import logging
-from flask import Flask, request, jsonify, send_file, render_template
+import requests
+from flask import Flask, request, jsonify, send_file
+from shapely.geometry import shape, mapping
+import geojson
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__, template_folder="templates", static_folder="static")
+app = Flask(__name__)
 
-# Fetch Redis URL
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")  # Fallback for local testing
-
-# Fix Redis URL Formatting
-if not REDIS_URL.startswith(("redis://", "rediss://", "unix://")):
-    logger.warning("❌ Invalid Redis URL detected. Check your Heroku config.")
-    REDIS_URL = None  # Prevents connection errors
-
-# Connect to Redis (if available)
-redis_client = None
-if REDIS_URL:
-    try:
-        redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-        redis_client.ping()  # Check Redis connection
-        logger.info("✅ Connected to Redis successfully!")
-    except redis.exceptions.ConnectionError:
-        logger.error("⚠️ Redis connection failed! Running without Redis.")
-        redis_client = None  # Prevent crash if Redis fails
-
-# File Storage
 GEOJSON_STORAGE = "data.geojson"
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")  # Make sure this is set in Heroku
 
-@app.route("/")
-def home():
-    """ Serve index.html """
-    return render_template("index.html")  # Fix: Now serves the correct homepage
-
-@app.route("/upload", methods=["POST"])
-def upload_csv():
-    """ Handles CSV file upload & stores it in Redis """
-    if "file" not in request.files:
-        return jsonify({"status": "error", "message": "No file part"}), 400
+def geocode_address(address):
+    """ Convert an address to latitude & longitude using Google Maps API. """
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={GOOGLE_MAPS_API_KEY}"
+    response = requests.get(url)
+    data = response.json()
     
-    file = request.files["file"]
-    if file.filename == "":
-        return jsonify({"status": "error", "message": "No selected file"}), 400
+    if data["status"] == "OK":
+        location = data["results"][0]["geometry"]["location"]
+        return location["lat"], location["lng"]
+    else:
+        return None, None
 
-    filename = secure_filename(file.filename)
-    filepath = os.path.join("/tmp", filename)
-    file.save(filepath)
+def fetch_osm_polygons(lat, lon):
+    """ Fetch building & parking lot polygons from OpenStreetMap using Overpass API. """
+    overpass_query = f"""
+    [out:json];
+    (
+        way["building"](around:100,{lat},{lon});
+        way["amenity"="parking"](around:100,{lat},{lon});
+    );
+    out body;
+    """
+    url = "https://overpass-api.de/api/interpreter"
+    response = requests.get(url, params={"data": overpass_query})
+    data = response.json()
 
-    # Simulating parsing and storing in Redis
-    try:
-        with open(filepath, "r") as f:
-            data = f.read()
+    features = []
+    for element in data["elements"]:
+        if "nodes" in element:
+            coords = []
+            for node_id in element["nodes"]:
+                node = next((n for n in data["elements"] if n["id"] == node_id), None)
+                if node and "lat" in node and "lon" in node:
+                    coords.append([node["lon"], node["lat"]])
 
-        if redis_client:
-            redis_client.set("uploaded_data", data)
-        logger.info(f"📂 File '{filename}' uploaded & stored!")
+            # Close polygon
+            if coords and coords[0] != coords[-1]:
+                coords.append(coords[0])
 
-        return jsonify({"status": "completed", "message": "File uploaded successfully"})
-    except Exception as e:
-        logger.error(f"❌ Error processing file: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+            feature = {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [coords]
+                },
+                "properties": {"type": "building" if "building" in element["tags"] else "parking"}
+            }
+            features.append(feature)
 
-@app.route("/download", methods=["GET"])
-def download_geojson():
-    """ Allows users to download the generated GeoJSON file """
-    if os.path.exists(GEOJSON_STORAGE):
-        return send_file(GEOJSON_STORAGE, as_attachment=True, mimetype="application/json")
-    return jsonify({"type": "FeatureCollection", "features": []})
+    return {"type": "FeatureCollection", "features": features}
 
 @app.route("/generate_polygons", methods=["POST"])
 def generate_polygons():
-    """ Generates polygons for venue & parking lots """
+    """ Generate polygons for venue building & parking lots. """
     data = request.json
     if not data or "venue_address" not in data:
         return jsonify({"status": "error", "message": "Missing venue address"}), 400
 
     venue_address = data["venue_address"]
-    logger.info(f"🗺️ Generating polygons for venue: {venue_address}")
+    lat, lon = geocode_address(venue_address)
+    if not lat or not lon:
+        return jsonify({"status": "error", "message": "Could not geocode address"}), 400
 
-    # Simulate GeoJSON creation
-    geojson_data = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[
-                        [-74.006, 40.7128], [-74.005, 40.7129], [-74.004, 40.7127], [-74.006, 40.7128]
-                    ]]
-                },
-                "properties": {"name": "Venue Area"}
-            }
-        ]
-    }
+    geojson_data = fetch_osm_polygons(lat, lon)
 
     with open(GEOJSON_STORAGE, "w") as geojson_file:
         json.dump(geojson_data, geojson_file)
-
-    if redis_client:
-        redis_client.set("geojson_data", json.dumps(geojson_data))
-    logger.info("✅ Polygons generated & stored!")
 
     return jsonify({"status": "completed", "message": "Polygons generated", "geojson": geojson_data})
 
