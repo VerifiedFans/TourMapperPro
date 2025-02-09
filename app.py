@@ -3,15 +3,18 @@ import json
 import logging
 import requests
 from flask import Flask, request, jsonify, send_file, render_template
+from werkzeug.utils import secure_filename
 
-# ✅ Define Flask app & ensure it serves HTML
+# ✅ Define Flask app with template/static folders
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-# Setup logging
+# Setup logging for debugging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 GEOJSON_STORAGE = "data.geojson"
+UPLOAD_FOLDER = "/tmp"  # ✅ Use temporary storage for uploads
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")  # Ensure this is set in Heroku Config Vars
 
 progress_status = {"progress": 0}  # Track processing progress
@@ -20,6 +23,25 @@ progress_status = {"progress": 0}  # Track processing progress
 def home():
     """ ✅ Fix: Render the frontend page instead of plain text. """
     return render_template("index.html")  # ✅ Loads your frontend
+
+@app.route("/upload", methods=["POST"])
+def upload_csv():
+    """ ✅ Handles CSV file upload & logs success/failure. """
+    if "file" not in request.files:
+        logger.error("❌ No file part in request")
+        return jsonify({"status": "error", "message": "No file part"}), 400
+
+    file = request.files["file"]
+    if file.filename == "":
+        logger.error("❌ No file selected")
+        return jsonify({"status": "error", "message": "No selected file"}), 400
+
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    file.save(filepath)
+
+    logger.info(f"📂 File '{filename}' uploaded successfully!")
+    return jsonify({"status": "completed", "message": "File uploaded successfully"})
 
 @app.route("/progress", methods=["GET"])
 def check_progress():
