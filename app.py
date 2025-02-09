@@ -11,23 +11,26 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Ensure Redis URL is correctly set
-REDIS_URL = os.getenv("REDIS_URL")
+# Fetch Redis URL
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")  # Fallback for local testing
 
-# Prevent app crash if Redis URL is missing
-if not REDIS_URL:
-    logger.warning("❌ Redis URL is missing! Check your Heroku environment variables.")
-    REDIS_URL = "redis://localhost:6379"  # Safe fallback for local development
+# Fix Redis URL Formatting
+if not REDIS_URL.startswith(("redis://", "rediss://", "unix://")):
+    logger.warning("❌ Invalid Redis URL detected. Check your Heroku config.")
+    REDIS_URL = None  # Prevents connection errors
 
-try:
-    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-    redis_client.ping()  # Check if Redis is reachable
-    logger.info("✅ Connected to Redis successfully!")
-except redis.exceptions.ConnectionError:
-    logger.error("⚠️ Warning: Could not connect to Redis! Ensure Redis is running.")
-    redis_client = None  # Disable Redis if connection fails
+# Connect to Redis (if available)
+redis_client = None
+if REDIS_URL:
+    try:
+        redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        redis_client.ping()  # Check Redis connection
+        logger.info("✅ Connected to Redis successfully!")
+    except redis.exceptions.ConnectionError:
+        logger.error("⚠️ Redis connection failed! Running without Redis.")
+        redis_client = None  # Prevent crash if Redis fails
 
-# Storage for uploaded data
+# File Storage
 GEOJSON_STORAGE = "data.geojson"
 
 @app.route("/")
@@ -53,8 +56,9 @@ def upload_csv():
         with open(filepath, "r") as f:
             data = f.read()
 
-        redis_client.set("uploaded_data", data)
-        logger.info(f"📂 File '{filename}' uploaded & stored in Redis!")
+        if redis_client:
+            redis_client.set("uploaded_data", data)
+        logger.info(f"📂 File '{filename}' uploaded & stored!")
 
         return jsonify({"status": "completed", "message": "File uploaded successfully"})
     except Exception as e:
@@ -98,7 +102,8 @@ def generate_polygons():
     with open(GEOJSON_STORAGE, "w") as geojson_file:
         json.dump(geojson_data, geojson_file)
 
-    redis_client.set("geojson_data", json.dumps(geojson_data))
+    if redis_client:
+        redis_client.set("geojson_data", json.dumps(geojson_data))
     logger.info("✅ Polygons generated & stored!")
 
     return jsonify({"status": "completed", "message": "Polygons generated", "geojson": geojson_data})
