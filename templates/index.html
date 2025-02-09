@@ -10,12 +10,10 @@
         .progress-container { width: 80%; background-color: #ddd; margin: 20px auto; }
         .progress-bar { width: 0%; height: 20px; background-color: green; color: white; text-align: center; }
     </style>
-    <script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=drawing"></script>
 </head>
 <body>
     <h1>TourMapper Pro</h1>
 
-    <!-- File Upload Section -->
     <h3>Upload CSV File</h3>
     <input type="file" id="fileInput">
     <button onclick="uploadFile()">Upload</button>
@@ -34,44 +32,6 @@
     <button onclick="downloadGeoJSON()">Download GeoJSON</button>
 
     <script>
-        function initMap() {
-            var map = new google.maps.Map(document.createElement('div'), { // Hidden Map
-                center: { lat: 37.7749, lng: -122.4194 },
-                zoom: 10
-            });
-
-            var drawingManager = new google.maps.drawing.DrawingManager({
-                drawingMode: google.maps.drawing.OverlayType.POLYGON,
-                drawingControl: false // No visible controls
-            });
-
-            drawingManager.setMap(map);
-
-            google.maps.event.addListener(drawingManager, 'overlaycomplete', function(event) {
-                if (event.type === 'polygon') {
-                    var coordinates = event.overlay.getPath().getArray().map(coord => ({
-                        lat: coord.lat(),
-                        lng: coord.lng()
-                    }));
-
-                    sendPolygonToServer(coordinates);
-                }
-            });
-        }
-
-        function sendPolygonToServer(coordinates) {
-            fetch('/save_polygon', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ polygon: coordinates })
-            })
-            .then(response => response.json())
-            .then(data => console.log('Polygon saved:', data))
-            .catch(error => console.error('Error saving polygon:', error));
-        }
-
-        window.onload = initMap;  // Initialize map (hidden)
-
         function uploadFile() {
             let fileInput = document.getElementById("fileInput").files[0];
             if (!fileInput) { alert("No file selected."); return; }
@@ -80,7 +40,12 @@
 
             fetch("/upload", { method: "POST", body: formData })
                 .then(response => response.json())
-                .then(data => { alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); })
+                .then(data => { 
+                    alert(data.message);
+                    if (data.status === "completed") {
+                        listenForProgress();
+                    }
+                })
                 .catch(error => console.error("Error:", error));
         }
 
@@ -93,8 +58,27 @@
 
             fetch("/upload", { method: "POST", body: formData })
                 .then(response => response.json())
-                .then(data => { alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); })
+                .then(data => { 
+                    alert(data.message);
+                    if (data.status === "completed") {
+                        listenForProgress();
+                    }
+                })
                 .catch(error => console.error("Error:", error));
+        }
+
+        function listenForProgress() {
+            const eventSource = new EventSource("/progress");
+            eventSource.onmessage = function(event) {
+                let data = JSON.parse(event.data);
+                let progressBar = document.getElementById("progressBar");
+                progressBar.style.width = data.progress + "%";
+                progressBar.innerText = data.progress + "%";
+
+                if (data.progress >= 100) {
+                    eventSource.close();
+                }
+            };
         }
 
         document.getElementById("dropArea").addEventListener("drop", function(event) {
@@ -105,7 +89,12 @@
 
             fetch("/upload", { method: "POST", body: formData })
                 .then(response => response.json())
-                .then(data => { alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); })
+                .then(data => { 
+                    alert(data.message);
+                    if (data.status === "completed") {
+                        listenForProgress();
+                    }
+                })
                 .catch(error => console.error("Error:", error));
         });
 
