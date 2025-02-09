@@ -1,46 +1,117 @@
+from flask import Flask, request, jsonify, send_file, render_template
+import csv
+import json
 import os
-from flask import Flask, render_template, request, redirect, url_for, flash
-from flask_wtf import FlaskForm
-from markupsafe import Markup  # ✅ FIXED: Correct import for Flask 2.x+
-from wtforms import StringField, SubmitField
-from wtforms.validators import DataRequired
-import redis
-from celery import Celery
+import requests
+from shapely.geometry import mapping, Polygon
 
-# Initialize Flask App
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'supersecretkey')
 
-# Redis & Celery Config
-app.config['CELERY_BROKER_URL'] = os.getenv('CELERY_BROKER_URL')
-app.config['CELERY_RESULT_BACKEND'] = os.getenv('CELERY_RESULT_BACKEND')
+GEOJSON_FILE = "polygons.geojson"
+API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")  # Google Maps API key
 
-celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
-celery.conf.update(app.config)
+# Store polygons temporarily
+collected_polygons = []
 
-# Sample Redis connection
-redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-redis_client = redis.Redis.from_url(redis_url)
-
-# Flask Form
-class ExampleForm(FlaskForm):
-    name = StringField('Your Name', validators=[DataRequired()])
-    submit = SubmitField('Submit')
-
-# Home Route
-@app.route('/', methods=['GET', 'POST'])
+@app.route("/")
 def index():
-    form = ExampleForm()
-    if form.validate_on_submit():
-        flash(f'Thank you, {form.name.data}!', 'success')
-        return redirect(url_for('index'))
-    return render_template('index.html', form=form)
+    return render_template("index.html", google_maps_api_key=API_KEY)
 
-# Sample Celery Task
-@celery.task
-def add_numbers(x, y):
-    return x + y
+@app.route("/upload", methods=["POST"])
+def upload_csv():
+    """Handles CSV file upload"""
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
 
-# Run the App
-if __name__ == '__main__':
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
+
+    venue_addresses = []
+    parking_addresses = []
+
+    file_data = file.read().decode("utf-8").splitlines()
+    csv_reader = csv.reader(file_data)
+
+    for row in csv_reader:
+        if len(row) >= 2:  # Ensuring there are enough columns
+            venue_addresses.append(row[0])  # First column: venue address
+            parking_addresses.append(row[1])  # Second column: parking lot address
+
+    # Convert venue & parking lot addresses into polygons
+    venue_polygons = get_polygons_from_addresses(venue_addresses)
+    parking_polygons = get_polygons_from_addresses(parking_addresses)
+
+    # Store collected polygons
+    collected_polygons.extend(venue_polygons)
+    collected_polygons.extend(parking_polygons)
+
+    return jsonify({"status": "completed", "venues": len(venue_polygons), "parking_lots": len(parking_polygons)})
+
+
+@app.route("/save_polygon", methods=["POST"])
+def save_polygon():
+    """Stores drawn polygon coordinates"""
+    data = request.json
+    if not data or "polygon" not in data:
+        return jsonify({"error": "Invalid data"}), 400
+
+    collected_polygons.append(Polygon([(p["lng"], p["lat"]) for p in data["polygon"]]))
+
+    return jsonify({"status": "success", "polygon_count": len(collected_polygons)})
+
+
+@app.route("/download", methods=["GET"])
+def download_geojson():
+    """Generates and allows download of GeoJSON file"""
+    geojson_data = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "geometry": mapping(polygon), "properties": {}} for polygon in collected_polygons
+        ]
+    }
+
+    with open(GEOJSON_FILE, "w") as f:
+        json.dump(geojson_data, f)
+
+    return send_file(GEOJSON_FILE, as_attachment=True)
+
+
+def get_polygons_from_addresses(addresses):
+    """Fetches polygons for venue & parking lot addresses using Google Maps API"""
+    polygons = []
+    for address in addresses:
+        lat, lng = geocode_address(address)
+        if lat and lng:
+            footprint = create_polygon_around(lat, lng)
+            polygons.append(footprint)
+
+    return polygons
+
+
+def geocode_address(address):
+    """Geocodes an address to latitude and longitude"""
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={API_KEY}"
+    response = requests.get(url)
+    data = response.json()
+
+    if data["status"] == "OK":
+        location = data["results"][0]["geometry"]["location"]
+        return location["lat"], location["lng"]
+
+    return None, None
+
+
+def create_polygon_around(lat, lng, size=0.0003):
+    """Creates a polygon around a point (venue or parking lot)"""
+    return Polygon([
+        (lng - size, lat - size),
+        (lng + size, lat - size),
+        (lng + size, lat + size),
+        (lng - size, lat + size),
+        (lng - size, lat - size)
+    ])
+
+
+if __name__ == "__main__":
     app.run(debug=True)
