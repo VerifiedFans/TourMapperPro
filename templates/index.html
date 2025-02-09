@@ -19,33 +19,20 @@
 <body>
     <div class="container">
         <h1>TourMapper Pro</h1>
-
         <h3>Upload CSV File</h3>
         <input type="file" id="fileInput">
         <button onclick="uploadFile()">Upload</button>
-
-        <h3>Or Drag & Drop File Here</h3>
-        <div class="drop-area" id="dropArea">Drop your CSV file here</div>
-
-        <h3>Or Paste CSV Content Below</h3>
-        <textarea id="csvTextarea" placeholder="Paste CSV data here..." rows="5" cols="50"></textarea>
-        <button onclick="uploadText()">Submit CSV</button>
-
         <div class="progress-container">
             <div class="progress-bar" id="progressBar">0%</div>
         </div>
-
         <button id="downloadButton" onclick="downloadGeoJSON()">Download GeoJSON</button>
     </div>
-
     <script>
         function uploadFile() {
             let fileInput = document.getElementById("fileInput").files[0];
             if (!fileInput) { alert("No file selected."); return; }
-
             let formData = new FormData();
             formData.append("file", fileInput);
-
             fetch("/upload", { method: "POST", body: formData })
                 .then(response => response.json())
                 .then(data => { 
@@ -54,30 +41,10 @@
                 })
                 .catch(error => console.error("Error:", error));
         }
-
-        function uploadText() {
-            let csvText = document.getElementById("csvTextarea").value;
-            if (!csvText) { alert("No text provided."); return; }
-
-            let blob = new Blob([csvText], { type: "text/csv" });
-            let formData = new FormData();
-            formData.append("file", blob, "pasted_csv.csv");
-
-            fetch("/upload", { method: "POST", body: formData })
-                .then(response => response.json())
-                .then(data => { 
-                    alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); 
-                    startProcessing();
-                })
-                .catch(error => console.error("Error:", error));
-        }
-
         function startProcessing() {
             let venueAddress = prompt("Enter venue address:");
             if (!venueAddress) { alert("No address provided."); return; }
-
             document.querySelector(".progress-container").style.display = "block";
-
             fetch("/generate_polygons", { 
                 method: "POST", 
                 headers: { "Content-Type": "application/json" }, 
@@ -93,17 +60,14 @@
             })
             .catch(error => console.error("Error:", error));
         }
-
         function updateProgress() {
             const progressBar = document.getElementById("progressBar");
-
             function checkProgress() {
                 fetch("/progress")
                     .then(response => response.json())
                     .then(data => {
                         progressBar.style.width = data.progress + "%";
                         progressBar.innerText = data.progress + "%";
-
                         if (data.progress < 100) {
                             setTimeout(checkProgress, 1000);
                         } else {
@@ -114,29 +78,9 @@
             }
             checkProgress();
         }
-
         function downloadGeoJSON() {
             window.location.href = "/download";
         }
-
-        document.getElementById("dropArea").addEventListener("drop", function(event) {
-            event.preventDefault();
-            let file = event.dataTransfer.files[0];
-            let formData = new FormData();
-            formData.append("file", file);
-
-            fetch("/upload", { method: "POST", body: formData })
-                .then(response => response.json())
-                .then(data => { 
-                    alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); 
-                    startProcessing();
-                })
-                .catch(error => console.error("Error:", error));
-        });
-
-        document.getElementById("dropArea").addEventListener("dragover", function(event) {
-            event.preventDefault();
-        });
     </script>
 </body>
 </html>
