@@ -1,91 +1,63 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TourMapper Pro</title>
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-        .container { max-width: 600px; margin: auto; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); }
-        .drop-area { border: 2px dashed #007bff; padding: 20px; margin: 10px; cursor: pointer; }
-        .progress-container { width: 100%; background-color: #ddd; margin: 20px auto; display: none; }
-        .progress-bar { width: 0%; height: 20px; background-color: green; color: white; text-align: center; }
-        button { background-color: #007bff; color: white; padding: 10px; border: none; cursor: pointer; border-radius: 5px; margin-top: 10px; }
-        button:hover { background-color: #0056b3; }
-        #downloadButton { background-color: #28a745; display: none; }
-        #downloadButton:hover { background-color: #218838; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>TourMapper Pro</h1>
-        <h3>Upload CSV File</h3>
-        <input type="file" id="fileInput">
-        <button onclick="uploadFile()">Upload</button>
-        <div class="progress-container">
-            <div class="progress-bar" id="progressBar">0%</div>
-        </div>
-        <button id="downloadButton" onclick="downloadGeoJSON()">Download GeoJSON</button>
-    </div>
-    <script>
-        function uploadFile() {
-            let fileInput = document.getElementById("fileInput").files[0];
-            if (!fileInput) { alert("No file selected."); return; }
-            let formData = new FormData();
-            formData.append("file", fileInput);
-            fetch("/upload", { method: "POST", body: formData })
-                .then(response => response.json())
-                .then(data => { 
-                    console.log("Upload response:", data);  // ✅ Debugging log
-                    alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); 
-                    startProcessing();
-                })
-                .catch(error => console.error("Error:", error));
-        }
-        function startProcessing() {
-            let venueAddress = prompt("Enter venue address:");
-            if (!venueAddress) { alert("No address provided."); return; }
+<script>
+    function uploadFile() {
+        let fileInput = document.getElementById("fileInput").files[0];
+        if (!fileInput) { alert("No file selected."); return; }
+        let formData = new FormData();
+        formData.append("file", fileInput);
 
-            document.querySelector(".progress-container").style.display = "block";
-
-            fetch("/generate_polygons", { 
-                method: "POST", 
-                headers: { "Content-Type": "application/json" }, 
-                body: JSON.stringify({ venue_address: venueAddress }) 
-            })
+        fetch("/upload", { method: "POST", body: formData })
             .then(response => response.json())
             .then(data => { 
-                console.log("Processing response:", data);  // ✅ Debugging log
-                if (data.status === "completed") {
-                    updateProgress();
-                } else {
-                    alert("Error generating polygons: " + data.message);
-                }
+                console.log("Upload response:", data);  // ✅ Debugging log
+                alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); 
+                startProcessing();
             })
-            .catch(error => console.error("Error starting processing:", error));
-        }
-        function updateProgress() {
-            const progressBar = document.getElementById("progressBar");
-            function checkProgress() {
-                fetch("/progress")
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log("Progress:", data.progress);  // ✅ Debugging log
-                        progressBar.style.width = data.progress + "%";
-                        progressBar.innerText = data.progress + "%";
-                        if (data.progress < 100) {
-                            setTimeout(checkProgress, 1000);
-                        } else {
-                            alert("Processing Complete! Click 'Download GeoJSON'");
-                            document.getElementById("downloadButton").style.display = "block";
-                        }
-                    });
+            .catch(error => console.error("❌ Upload Error:", error));
+    }
+
+    function startProcessing() {
+        let venueAddress = prompt("Enter venue address:");
+        if (!venueAddress) { alert("No address provided."); return; }
+
+        document.querySelector(".progress-container").style.display = "block";
+
+        fetch("/generate_polygons", { 
+            method: "POST", 
+            headers: { "Content-Type": "application/json" }, 
+            body: JSON.stringify({ venue_address: venueAddress }) 
+        })
+        .then(response => response.json())
+        .then(data => { 
+            console.log("Processing response:", data);  // ✅ Debugging log
+            if (data.status === "completed") {
+                updateProgress();
+            } else {
+                alert("❌ Error generating polygons: " + data.message);
             }
-            checkProgress();
+        })
+        .catch(error => console.error("❌ Processing Error:", error));
+    }
+
+    function updateProgress() {
+        const progressBar = document.getElementById("progressBar");
+
+        function checkProgress() {
+            fetch("/progress")
+                .then(response => response.json())
+                .then(data => {
+                    console.log("Progress:", data.progress);  // ✅ Debugging log
+                    progressBar.style.width = data.progress + "%";
+                    progressBar.innerText = data.progress + "%";
+
+                    if (data.progress < 100) {
+                        setTimeout(checkProgress, 1000);
+                    } else {
+                        alert("✅ Processing Complete! Click 'Download GeoJSON'");
+                        document.getElementById("downloadButton").style.display = "block";
+                    }
+                })
+                .catch(error => console.error("❌ Progress Error:", error));
         }
-        function downloadGeoJSON() {
-            window.location.href = "/download";
-        }
-    </script>
-</body>
-</html>
+        checkProgress();
+    }
+</script>
