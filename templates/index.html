@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -36,6 +37,7 @@
             fetch("/upload", { method: "POST", body: formData })
                 .then(response => response.json())
                 .then(data => { 
+                    console.log("Upload response:", data);  // ✅ Debugging log
                     alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); 
                     startProcessing();
                 })
@@ -44,7 +46,9 @@
         function startProcessing() {
             let venueAddress = prompt("Enter venue address:");
             if (!venueAddress) { alert("No address provided."); return; }
+
             document.querySelector(".progress-container").style.display = "block";
+
             fetch("/generate_polygons", { 
                 method: "POST", 
                 headers: { "Content-Type": "application/json" }, 
@@ -52,13 +56,14 @@
             })
             .then(response => response.json())
             .then(data => { 
+                console.log("Processing response:", data);  // ✅ Debugging log
                 if (data.status === "completed") {
                     updateProgress();
                 } else {
                     alert("Error generating polygons: " + data.message);
                 }
             })
-            .catch(error => console.error("Error:", error));
+            .catch(error => console.error("Error starting processing:", error));
         }
         function updateProgress() {
             const progressBar = document.getElementById("progressBar");
@@ -66,6 +71,7 @@
                 fetch("/progress")
                     .then(response => response.json())
                     .then(data => {
+                        console.log("Progress:", data.progress);  // ✅ Debugging log
                         progressBar.style.width = data.progress + "%";
                         progressBar.innerText = data.progress + "%";
                         if (data.progress < 100) {
