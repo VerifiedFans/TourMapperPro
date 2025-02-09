@@ -1,3 +1,4 @@
+
 import os
 import json
 import logging
@@ -5,28 +6,22 @@ import requests
 from flask import Flask, request, jsonify, send_file, render_template
 from werkzeug.utils import secure_filename
 
-# ✅ Define Flask app with template/static folders
+# ✅ Define Flask app
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-# Setup logging for debugging
+# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 GEOJSON_STORAGE = "data.geojson"
-UPLOAD_FOLDER = "/tmp"  # ✅ Use temporary storage for uploads
+UPLOAD_FOLDER = "/tmp"
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")  # Ensure this is set in Heroku Config Vars
 
 progress_status = {"progress": 0}  # Track processing progress
 
-@app.route("/")
-def home():
-    """ ✅ Fix: Render the frontend page instead of plain text. """
-    return render_template("index.html")  # ✅ Loads your frontend
-
 @app.route("/upload", methods=["POST"])
 def upload_csv():
-    """ ✅ Handles CSV file upload & logs success/failure. """
+    """ ✅ Handles CSV file upload """
     if "file" not in request.files:
         logger.error("❌ No file part in request")
         return jsonify({"status": "error", "message": "No file part"}), 400
@@ -43,34 +38,44 @@ def upload_csv():
     logger.info(f"📂 File '{filename}' uploaded successfully!")
     return jsonify({"status": "completed", "message": "File uploaded successfully"})
 
-@app.route("/progress", methods=["GET"])
-def check_progress():
-    return jsonify(progress_status)
-
 @app.route("/generate_polygons", methods=["POST"])
 def generate_polygons():
+    """ ✅ Generate polygons for venue & parking lot and log progress """
     global progress_status
     progress_status["progress"] = 10  
 
     data = request.json
+    logger.info(f"📩 Received data: {data}")  # ✅ Log the request data
+
     if not data or "venue_address" not in data:
+        logger.error("❌ Missing venue address in request!")
         return jsonify({"status": "error", "message": "Missing venue address"}), 400
 
     venue_address = data["venue_address"]
+    logger.info(f"📍 Geocoding address: {venue_address}")
+
     lat, lon = geocode_address(venue_address)
     if not lat or not lon:
+        logger.error("❌ Failed to geocode address")
         return jsonify({"status": "error", "message": "Could not geocode address"}), 400
 
     progress_status["progress"] = 50  
 
     geojson_data = fetch_osm_polygons(lat, lon)
+    if not geojson_data["features"]:
+        logger.warning("⚠️ No polygons found for this address")
 
     with open(GEOJSON_STORAGE, "w") as geojson_file:
         json.dump(geojson_data, geojson_file)
 
     progress_status["progress"] = 100  
 
+    logger.info("✅ Polygons successfully generated and saved!")
     return jsonify({"status": "completed", "message": "Polygons generated", "geojson": geojson_data})
+
+@app.route("/progress", methods=["GET"])
+def check_progress():
+    return jsonify(progress_status)
 
 @app.route("/download", methods=["GET"])
 def download_geojson():
