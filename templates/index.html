@@ -9,7 +9,6 @@
         .drop-area { border: 2px dashed #007bff; padding: 20px; margin: 10px; cursor: pointer; }
         .progress-container { width: 80%; background-color: #ddd; margin: 20px auto; }
         .progress-bar { width: 0%; height: 20px; background-color: green; color: white; text-align: center; }
-        #map { height: 500px; width: 100%; margin-top: 20px; }
     </style>
     <script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=drawing"></script>
 </head>
@@ -34,25 +33,16 @@
 
     <button onclick="downloadGeoJSON()">Download GeoJSON</button>
 
-    <!-- Google Maps Section -->
-    <h3>Draw a Polygon on the Map</h3>
-    <div id="map"></div>
-
     <script>
-        // Initialize Google Map
         function initMap() {
-            var map = new google.maps.Map(document.getElementById('map'), {
-                center: { lat: 37.7749, lng: -122.4194 }, // Default to San Francisco
+            var map = new google.maps.Map(document.createElement('div'), { // Hidden Map
+                center: { lat: 37.7749, lng: -122.4194 },
                 zoom: 10
             });
 
             var drawingManager = new google.maps.drawing.DrawingManager({
                 drawingMode: google.maps.drawing.OverlayType.POLYGON,
-                drawingControl: true,
-                drawingControlOptions: {
-                    position: google.maps.ControlPosition.TOP_CENTER,
-                    drawingModes: ['polygon']
-                }
+                drawingControl: false // No visible controls
             });
 
             drawingManager.setMap(map);
@@ -63,16 +53,25 @@
                         lat: coord.lat(),
                         lng: coord.lng()
                     }));
-                    console.log('Polygon Coordinates:', coordinates);
-                    alert("Polygon drawn! Check console for coordinates.");
+
+                    sendPolygonToServer(coordinates);
                 }
             });
         }
 
-        // Call initMap when page loads
-        window.onload = initMap;
+        function sendPolygonToServer(coordinates) {
+            fetch('/save_polygon', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ polygon: coordinates })
+            })
+            .then(response => response.json())
+            .then(data => console.log('Polygon saved:', data))
+            .catch(error => console.error('Error saving polygon:', error));
+        }
 
-        // File Upload Function
+        window.onload = initMap;  // Initialize map (hidden)
+
         function uploadFile() {
             let fileInput = document.getElementById("fileInput").files[0];
             if (!fileInput) { alert("No file selected."); return; }
@@ -85,7 +84,6 @@
                 .catch(error => console.error("Error:", error));
         }
 
-        // Paste CSV Data Function
         function uploadText() {
             let csvText = document.getElementById("csvTextarea").value;
             if (!csvText) { alert("No text provided."); return; }
@@ -99,7 +97,6 @@
                 .catch(error => console.error("Error:", error));
         }
 
-        // Drag & Drop CSV Upload
         document.getElementById("dropArea").addEventListener("drop", function(event) {
             event.preventDefault();
             let file = event.dataTransfer.files[0];
@@ -116,7 +113,6 @@
             event.preventDefault();
         });
 
-        // Download GeoJSON
         function downloadGeoJSON() {
             window.location.href = "/download";
         }
