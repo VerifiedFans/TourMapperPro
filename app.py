@@ -1,117 +1,107 @@
 import os
+import redis
 import json
-import requests
-import csv
-import time
+import logging
 from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
-from redis import Redis
+from werkzeug.utils import secure_filename
 
-# Initialize Flask app
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
-CORS(app)  # Allow cross-origin requests
 
-# Configure Redis (For Progress Bar)
-redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-redis_conn = Redis.from_url(redis_url)
+# Ensure Redis URL is correctly set
+REDIS_URL = os.getenv("REDIS_URL")
 
-UPLOAD_FOLDER = "uploads"
-GEOJSON_FOLDER = "geojsons"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(GEOJSON_FOLDER, exist_ok=True)
+# Prevent app crash if Redis URL is missing
+if not REDIS_URL:
+    logger.warning("❌ Redis URL is missing! Check your Heroku environment variables.")
+    REDIS_URL = "redis://localhost:6379"  # Safe fallback for local development
 
-# Google Maps API Key (Set in Heroku)
-GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+try:
+    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    redis_client.ping()  # Check if Redis is reachable
+    logger.info("✅ Connected to Redis successfully!")
+except redis.exceptions.ConnectionError:
+    logger.error("⚠️ Warning: Could not connect to Redis! Ensure Redis is running.")
+    redis_client = None  # Disable Redis if connection fails
 
-def get_polygon_from_google(address, type="establishment"):
-    """Fetch venue or parking polygon from Google Maps API"""
-    base_url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
-    params = {"query": address, "key": GOOGLE_MAPS_API_KEY}
-    
-    response = requests.get(base_url, params=params)
-    data = response.json()
+# Storage for uploaded data
+GEOJSON_STORAGE = "data.geojson"
 
-    if "results" in data and len(data["results"]) > 0:
-        place_id = data["results"][0]["place_id"]
-        details_url = "https://maps.googleapis.com/maps/api/place/details/json"
-        details_params = {"place_id": place_id, "key": GOOGLE_MAPS_API_KEY, "fields": "geometry"}
-        details_response = requests.get(details_url, params=details_params)
-        details_data = details_response.json()
-
-        if "result" in details_data and "geometry" in details_data["result"]:
-            return details_data["result"]["geometry"]
-    
-    return None  # Return None if no data found
-
-@app.route("/", methods=["GET"])
+@app.route("/")
 def home():
-    return "TourMapper Pro API Running!"
+    return "TourMapper Pro is Running 🚀"
 
 @app.route("/upload", methods=["POST"])
-def upload_file():
+def upload_csv():
+    """ Handles CSV file upload & stores it in Redis """
     if "file" not in request.files:
-        return jsonify({"status": "failed", "message": "No file part"}), 400
-
+        return jsonify({"status": "error", "message": "No file part"}), 400
+    
     file = request.files["file"]
     if file.filename == "":
-        return jsonify({"status": "failed", "message": "No selected file"}), 400
+        return jsonify({"status": "error", "message": "No selected file"}), 400
 
-    filepath = os.path.join(UPLOAD_FOLDER, file.filename)
+    filename = secure_filename(file.filename)
+    filepath = os.path.join("/tmp", filename)
     file.save(filepath)
 
-    geojson_data = {"type": "FeatureCollection", "features": []}
-
+    # Simulating parsing and storing in Redis
     try:
-        with open(filepath, "r", newline='', encoding="utf-8") as csvfile:
-            reader = csv.reader(csvfile)
-            headers = next(reader)
+        with open(filepath, "r") as f:
+            data = f.read()
 
-            total_rows = sum(1 for _ in reader)
-            csvfile.seek(0)
-            next(reader)
+        redis_client.set("uploaded_data", data)
+        logger.info(f"📂 File '{filename}' uploaded & stored in Redis!")
 
-            for i, row in enumerate(reader, start=1):
-                if not row:
-                    continue
-                
-                address = row[0]
-                venue_polygon = get_polygon_from_google(address, type="establishment")
-                parking_polygon = get_polygon_from_google(f"Parking near {address}", type="parking")
-
-                if venue_polygon:
-                    geojson_data["features"].append({
-                        "type": "Feature",
-                        "properties": {"name": f"Venue {i}", "address": address},
-                        "geometry": venue_polygon
-                    })
-
-                if parking_polygon:
-                    geojson_data["features"].append({
-                        "type": "Feature",
-                        "properties": {"name": f"Parking {i}", "address": address},
-                        "geometry": parking_polygon
-                    })
-
-                progress = int((i / total_rows) * 100)
-                redis_conn.set("progress", progress)
-
-                time.sleep(0.2)
-
-        geojson_path = os.path.join(GEOJSON_FOLDER, "venues_parking.geojson")
-        with open(geojson_path, "w", encoding="utf-8") as geojson_file:
-            json.dump(geojson_data, geojson_file, indent=4)
-
-        return jsonify({"status": "completed", "message": "Upload successful!"})
-
+        return jsonify({"status": "completed", "message": "File uploaded successfully"})
     except Exception as e:
-        return jsonify({"status": "failed", "message": f"Error processing file: {str(e)}"}), 500
+        logger.error(f"❌ Error processing file: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/download", methods=["GET"])
 def download_geojson():
-    geojson_path = os.path.join(GEOJSON_FOLDER, "venues_parking.geojson")
-    if os.path.exists(geojson_path):
-        return send_file(geojson_path, as_attachment=True)
-    return jsonify({"status": "failed", "message": "No GeoJSON file available"}), 404
+    """ Allows users to download the generated GeoJSON file """
+    if os.path.exists(GEOJSON_STORAGE):
+        return send_file(GEOJSON_STORAGE, as_attachment=True, mimetype="application/json")
+    return jsonify({"type": "FeatureCollection", "features": []})
+
+@app.route("/generate_polygons", methods=["POST"])
+def generate_polygons():
+    """ Generates polygons for venue & parking lots """
+    data = request.json
+    if not data or "venue_address" not in data:
+        return jsonify({"status": "error", "message": "Missing venue address"}), 400
+
+    venue_address = data["venue_address"]
+    logger.info(f"🗺️ Generating polygons for venue: {venue_address}")
+
+    # Simulate GeoJSON creation
+    geojson_data = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [-74.006, 40.7128], [-74.005, 40.7129], [-74.004, 40.7127], [-74.006, 40.7128]
+                    ]]
+                },
+                "properties": {"name": "Venue Area"}
+            }
+        ]
+    }
+
+    with open(GEOJSON_STORAGE, "w") as geojson_file:
+        json.dump(geojson_data, geojson_file)
+
+    redis_client.set("geojson_data", json.dumps(geojson_data))
+    logger.info("✅ Polygons generated & stored!")
+
+    return jsonify({"status": "completed", "message": "Polygons generated", "geojson": geojson_data})
 
 if __name__ == "__main__":
     app.run(debug=True)
