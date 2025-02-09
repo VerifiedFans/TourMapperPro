@@ -1,117 +1,111 @@
-from flask import Flask, request, jsonify, send_file, render_template
+from flask import Flask, request, jsonify, send_file, Response
+from flask_sse import sse
+import time
 import csv
 import json
 import os
-import requests
-from shapely.geometry import mapping, Polygon
+import redis
 
 app = Flask(__name__)
+app.config["REDIS_URL"] = "redis://localhost:6379"
+app.register_blueprint(sse, url_prefix='/events')
 
-GEOJSON_FILE = "polygons.geojson"
-API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")  # Google Maps API key
+UPLOAD_FOLDER = "uploads"
+GEOJSON_FOLDER = "geojsons"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(GEOJSON_FOLDER, exist_ok=True)
 
-# Store polygons temporarily
-collected_polygons = []
-
-@app.route("/")
-def index():
-    return render_template("index.html", google_maps_api_key=API_KEY)
-
-@app.route("/upload", methods=["POST"])
-def upload_csv():
-    """Handles CSV file upload"""
-    if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
-
-    file = request.files["file"]
-    if file.filename == "":
-        return jsonify({"error": "No selected file"}), 400
-
-    venue_addresses = []
-    parking_addresses = []
-
-    file_data = file.read().decode("utf-8").splitlines()
-    csv_reader = csv.reader(file_data)
-
-    for row in csv_reader:
-        if len(row) >= 2:  # Ensuring there are enough columns
-            venue_addresses.append(row[0])  # First column: venue address
-            parking_addresses.append(row[1])  # Second column: parking lot address
-
-    # Convert venue & parking lot addresses into polygons
-    venue_polygons = get_polygons_from_addresses(venue_addresses)
-    parking_polygons = get_polygons_from_addresses(parking_addresses)
-
-    # Store collected polygons
-    collected_polygons.extend(venue_polygons)
-    collected_polygons.extend(parking_polygons)
-
-    return jsonify({"status": "completed", "venues": len(venue_polygons), "parking_lots": len(parking_polygons)})
-
-
-@app.route("/save_polygon", methods=["POST"])
-def save_polygon():
-    """Stores drawn polygon coordinates"""
-    data = request.json
-    if not data or "polygon" not in data:
-        return jsonify({"error": "Invalid data"}), 400
-
-    collected_polygons.append(Polygon([(p["lng"], p["lat"]) for p in data["polygon"]]))
-
-    return jsonify({"status": "success", "polygon_count": len(collected_polygons)})
-
-
-@app.route("/download", methods=["GET"])
-def download_geojson():
-    """Generates and allows download of GeoJSON file"""
-    geojson_data = {
-        "type": "FeatureCollection",
-        "features": [
-            {"type": "Feature", "geometry": mapping(polygon), "properties": {}} for polygon in collected_polygons
-        ]
+# Simulated Venue & Parking footprint collection (Replace with actual logic)
+def get_venue_footprint(address):
+    """Simulate getting a venue footprint based on address."""
+    return {
+        "type": "Polygon",
+        "coordinates": [[
+            [0, 0], [0.01, 0], [0.01, 0.01], [0, 0.01], [0, 0]
+        ]]
     }
 
-    with open(GEOJSON_FILE, "w") as f:
-        json.dump(geojson_data, f)
+def get_parking_lot_footprint(address):
+    """Simulate getting a parking lot footprint near the venue."""
+    return {
+        "type": "Polygon",
+        "coordinates": [[
+            [0.02, 0.02], [0.03, 0.02], [0.03, 0.03], [0.02, 0.03], [0.02, 0.02]
+        ]]
+    }
 
-    return send_file(GEOJSON_FILE, as_attachment=True)
+@app.route("/upload", methods=["POST"])
+def upload_file():
+    if "file" not in request.files:
+        return jsonify({"status": "failed", "message": "No file part"}), 400
+    
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"status": "failed", "message": "No selected file"}), 400
+    
+    filepath = os.path.join(UPLOAD_FOLDER, file.filename)
+    file.save(filepath)
 
+    geojson_data = {"type": "FeatureCollection", "features": []}
 
-def get_polygons_from_addresses(addresses):
-    """Fetches polygons for venue & parking lot addresses using Google Maps API"""
-    polygons = []
-    for address in addresses:
-        lat, lng = geocode_address(address)
-        if lat and lng:
-            footprint = create_polygon_around(lat, lng)
-            polygons.append(footprint)
+    # Read CSV file and process venue & parking footprints
+    try:
+        with open(filepath, "r", newline='', encoding="utf-8") as csvfile:
+            reader = csv.reader(csvfile)
+            headers = next(reader)  # Get column names
 
-    return polygons
+            # Ensure address column exists
+            if len(headers) == 0:
+                return jsonify({"status": "failed", "message": "CSV file appears empty!"}), 400
 
+            total_rows = sum(1 for _ in reader)
+            csvfile.seek(0)  # Reset file pointer
+            next(reader)  # Skip header again
 
-def geocode_address(address):
-    """Geocodes an address to latitude and longitude"""
-    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={API_KEY}"
-    response = requests.get(url)
-    data = response.json()
+            for i, row in enumerate(reader, start=1):
+                if len(row) == 0:
+                    continue  # Skip empty lines
 
-    if data["status"] == "OK":
-        location = data["results"][0]["geometry"]["location"]
-        return location["lat"], location["lng"]
+                address = row[0]  # Assume first column is the venue address
+                venue_polygon = get_venue_footprint(address)
+                parking_polygon = get_parking_lot_footprint(address)
 
-    return None, None
+                geojson_data["features"].append({
+                    "type": "Feature",
+                    "properties": {"name": f"Venue {i}", "address": address},
+                    "geometry": venue_polygon
+                })
+                geojson_data["features"].append({
+                    "type": "Feature",
+                    "properties": {"name": f"Parking {i}", "address": address},
+                    "geometry": parking_polygon
+                })
 
+                # Send progress update
+                progress = int((i / total_rows) * 100)
+                sse.publish({"progress": progress}, type="progress")
+                time.sleep(0.2)  # Simulate processing delay
 
-def create_polygon_around(lat, lng, size=0.0003):
-    """Creates a polygon around a point (venue or parking lot)"""
-    return Polygon([
-        (lng - size, lat - size),
-        (lng + size, lat - size),
-        (lng + size, lat + size),
-        (lng - size, lat + size),
-        (lng - size, lat - size)
-    ])
+        # Save GeoJSON
+        geojson_path = os.path.join(GEOJSON_FOLDER, "venues_parking.geojson")
+        with open(geojson_path, "w", encoding="utf-8") as geojson_file:
+            json.dump(geojson_data, geojson_file, indent=4)
 
+        return jsonify({"status": "completed", "message": "Upload successful!"})
+
+    except Exception as e:
+        return jsonify({"status": "failed", "message": f"Error processing file: {str(e)}"}), 500
+
+@app.route("/progress")
+def progress():
+    return Response(sse, mimetype="text/event-stream")
+
+@app.route("/download")
+def download_file():
+    geojson_path = os.path.join(GEOJSON_FOLDER, "venues_parking.geojson")
+    if os.path.exists(geojson_path):
+        return send_file(geojson_path, as_attachment=True)
+    return jsonify({"status": "failed", "message": "No GeoJSON file available"}), 404
 
 if __name__ == "__main__":
     app.run(debug=True)
