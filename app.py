@@ -1,9 +1,3 @@
-from flask import render_template
-
-@app.route("/")
-def home():
-    """ Serve the homepage (index.html). """
-    return render_template("index.html")
 import os
 import json
 import logging
@@ -12,17 +6,17 @@ from flask import Flask, request, jsonify, send_file
 from shapely.geometry import shape, mapping
 import geojson
 
-# Setup logging
+# ✅ Define Flask app FIRST before using routes
+app = Flask(__name__)
+
+# Setup logging for debugging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
-
 GEOJSON_STORAGE = "data.geojson"
-GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")  # Set in Heroku Config Vars
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")  # Make sure this is set in Heroku Config Vars
 
 progress_status = {"progress": 0}  # Track processing progress
-
 
 def geocode_address(address):
     """ Convert an address to latitude & longitude using Google Maps API. """
@@ -30,12 +24,12 @@ def geocode_address(address):
     response = requests.get(url)
     data = response.json()
 
-    if data["status"] == "OK":
+    if data.get("status") == "OK":
         location = data["results"][0]["geometry"]["location"]
         return location["lat"], location["lng"]
     else:
+        logger.error(f"Geocoding failed for {address}: {data}")
         return None, None
-
 
 def fetch_osm_polygons(lat, lon):
     """ Fetch building & parking lot polygons from OpenStreetMap using Overpass API. """
@@ -48,11 +42,16 @@ def fetch_osm_polygons(lat, lon):
     out body;
     """
     url = "https://overpass-api.de/api/interpreter"
-    response = requests.get(url, params={"data": overpass_query})
-    data = response.json()
+    
+    try:
+        response = requests.get(url, params={"data": overpass_query}, timeout=10)
+        data = response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error fetching data from Overpass API: {e}")
+        return {"type": "FeatureCollection", "features": []}
 
     features = []
-    for element in data["elements"]:
+    for element in data.get("elements", []):
         if "nodes" in element:
             coords = []
             for node_id in element["nodes"]:
@@ -60,28 +59,28 @@ def fetch_osm_polygons(lat, lon):
                 if node and "lat" in node and "lon" in node:
                     coords.append([node["lon"], node["lat"]])
 
-            # Close polygon
+            # Ensure polygon is closed
             if coords and coords[0] != coords[-1]:
                 coords.append(coords[0])
 
             feature = {
                 "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [coords]
-                },
-                "properties": {"type": "building" if "building" in element["tags"] else "parking"}
+                "geometry": {"type": "Polygon", "coordinates": [coords]},
+                "properties": {"type": "building" if "building" in element.get("tags", {}) else "parking"}
             }
             features.append(feature)
 
     return {"type": "FeatureCollection", "features": features}
 
+@app.route("/")
+def home():
+    """ ✅ Fix: Added a simple homepage to prevent 404 errors. """
+    return "✅ TourMapper Pro is running! Ready to process CSV files."
 
 @app.route("/progress", methods=["GET"])
 def check_progress():
-    """ Check progress of polygon generation. """
+    """ ✅ Fix: Properly returns progress status. """
     return jsonify(progress_status)
-
 
 @app.route("/generate_polygons", methods=["POST"])
 def generate_polygons():
@@ -109,14 +108,14 @@ def generate_polygons():
 
     return jsonify({"status": "completed", "message": "Polygons generated", "geojson": geojson_data})
 
-
 @app.route("/download", methods=["GET"])
 def download_geojson():
-    """ Allows users to download the latest generated GeoJSON file. """
+    """ ✅ Fix: Allows users to download the latest GeoJSON file. """
     if os.path.exists(GEOJSON_STORAGE):
         return send_file(GEOJSON_STORAGE, as_attachment=True, mimetype="application/json")
     return jsonify({"status": "error", "message": "No GeoJSON file available"}), 404
 
-
+# ✅ Fix: Ensure Heroku runs the app on the correct port
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
