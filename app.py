@@ -2,14 +2,13 @@ import os
 import redis
 import json
 import logging
-from flask import Flask, request, jsonify, send_file
-from werkzeug.utils import secure_filename
+from flask import Flask, request, jsonify, send_file, render_template
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder="templates", static_folder="static")
 
 # Fetch Redis URL
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")  # Fallback for local testing
@@ -35,7 +34,8 @@ GEOJSON_STORAGE = "data.geojson"
 
 @app.route("/")
 def home():
-    return "TourMapper Pro is Running 🚀"
+    """ Serve index.html """
+    return render_template("index.html")  # Fix: Now serves the correct homepage
 
 @app.route("/upload", methods=["POST"])
 def upload_csv():
