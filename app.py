@@ -1,3 +1,9 @@
+from flask import render_template
+
+@app.route("/")
+def home():
+    """ Serve the homepage (index.html). """
+    return render_template("index.html")
 import os
 import json
 import logging
