@@ -13,9 +13,20 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-# Redis setup
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
+import redis
+import os
+
+REDIS_URL = os.getenv("REDIS_URL")
+
+redis_client = None  # Default to None if Redis is not available
+if REDIS_URL:
+    try:
+        redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        redis_client.ping()  # Test the connection
+        print("✅ Connected to Redis!")
+    except redis.exceptions.ConnectionError as e:
+        print(f"⚠️ Redis connection failed: {e}")
+        redis_client = None  # Prevents crashes
 
 # File Storage
 UPLOAD_FOLDER = "/tmp"
