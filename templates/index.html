@@ -4,28 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-        .container { max-width: 600px; margin: auto; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); }
-        .progress-container { width: 100%; background-color: #ddd; margin: 20px auto; display: none; }
-        .progress-bar { width: 0%; height: 20px; background-color: green; color: white; text-align: center; }
-        button { background-color: #007bff; color: white; padding: 10px; border: none; cursor: pointer; border-radius: 5px; margin-top: 10px; }
-        button:hover { background-color: #0056b3; }
-        #downloadButton { background-color: #28a745; display: none; }
-        #downloadButton:hover { background-color: #218838; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>TourMapper Pro</h1>
-        <h3>Upload CSV File</h3>
-        <input type="file" id="fileInput">
-        <button onclick="uploadFile()">Upload</button>
-        <div class="progress-container">
-            <div class="progress-bar" id="progressBar">0%</div>
-        </div>
-        <button id="downloadButton" onclick="downloadGeoJSON()">Download GeoJSON</button>
-    </div>
     <script>
         function uploadFile() {
             let fileInput = document.getElementById("fileInput").files[0];
@@ -47,7 +25,7 @@
             let venueAddress = prompt("Enter venue address:");
             if (!venueAddress) { alert("No address provided."); return; }
 
-            document.querySelector(".progress-container").style.display = "block";
+            console.log("📩 Sending venue address:", venueAddress);
 
             fetch("/generate_polygons", { 
                 method: "POST", 
@@ -58,7 +36,7 @@
             .then(data => { 
                 console.log("Processing response:", data);
                 if (data.status === "completed") {
-                    updateProgress();
+                    document.getElementById("downloadButton").style.display = "block";
                 } else {
                     alert("❌ Error generating polygons: " + data.message);
                 }
@@ -66,29 +44,15 @@
             .catch(error => console.error("❌ Processing Error:", error));
         }
 
-        function updateProgress() {
-            const progressBar = document.getElementById("progressBar");
-            function checkProgress() {
-                fetch("/progress")
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log("Progress:", data.progress);
-                        progressBar.style.width = data.progress + "%";
-                        progressBar.innerText = data.progress + "%";
-                        if (data.progress < 100) {
-                            setTimeout(checkProgress, 1000);
-                        } else {
-                            alert("✅ Processing Complete! Click 'Download GeoJSON'");
-                            document.getElementById("downloadButton").style.display = "block";
-                        }
-                    });
-            }
-            checkProgress();
-        }
-
         function downloadGeoJSON() {
             window.location.href = "/download";
         }
     </script>
+</head>
+<body>
+    <h1>TourMapper Pro</h1>
+    <input type="file" id="fileInput">
+    <button onclick="uploadFile()">Upload</button>
+    <button id="downloadButton" onclick="downloadGeoJSON()" style="display:none;">Download GeoJSON</button>
 </body>
 </html>
