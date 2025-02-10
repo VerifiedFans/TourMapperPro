@@ -4,59 +4,78 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
-<script>
-    function uploadFile() {
-        let fileInput = document.getElementById("fileInput").files[0];
-        if (!fileInput) { alert("No file selected."); return; }
-        let formData = new FormData();
-        formData.append("file", fileInput);
-
-        fetch("/upload", { method: "POST", body: formData })
-            .then(response => response.json())
-            .then(data => { 
-                console.log("Upload response:", data);  
-                alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); 
-                startProcessing(); // 🛠️ Automatically trigger address input
-            })
-            .catch(error => console.error("❌ Upload Error:", error));
-    }
-
-    function startProcessing() {
-        let venueAddress = prompt("Enter venue address:");
-        if (!venueAddress) { 
-            alert("No address provided."); 
-            return; 
-        }
-
-        console.log("📩 Sending venue address:", venueAddress);
-
-        fetch("/generate_polygons", { 
-            method: "POST", 
-            headers: { "Content-Type": "application/json" }, 
-            body: JSON.stringify({ venue_address: venueAddress }) 
-        })
-        .then(response => response.json())
-        .then(data => { 
-            console.log("Processing response:", data);
-            if (data.status === "completed") {
-                document.getElementById("downloadButton").style.display = "block";
-            } else {
-                alert("❌ Error generating polygons: " + data.message);
-            }
-        })
-        .catch(error => console.error("❌ Processing Error:", error));
-    }
-
-    function downloadGeoJSON() {
-        window.location.href = "/download";
-    }
-</script>
-
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+        .drop-area { border: 2px dashed #007bff; padding: 20px; margin: 10px; cursor: pointer; }
+        .progress-container { width: 80%; background-color: #ddd; margin: 20px auto; }
+        .progress-bar { width: 0%; height: 20px; background-color: green; color: white; text-align: center; }
+        button { padding: 10px; margin-top: 10px; cursor: pointer; }
+        #downloadButton { display: none; }
+    </style>
 </head>
 <body>
     <h1>TourMapper Pro</h1>
+
+    <h3>Upload CSV File</h3>
     <input type="file" id="fileInput">
     <button onclick="uploadFile()">Upload</button>
-    <button id="downloadButton" onclick="downloadGeoJSON()" style="display:none;">Download GeoJSON</button>
+
+    <h3>Or Drag & Drop File Here</h3>
+    <div class="drop-area" id="dropArea">Drop your CSV file here</div>
+
+    <div class="progress-container">
+        <div class="progress-bar" id="progressBar">0%</div>
+    </div>
+
+    <button id="downloadButton" onclick="downloadGeoJSON()">Download GeoJSON</button>
+
+    <script>
+        function uploadFile() {
+            let fileInput = document.getElementById("fileInput").files[0];
+            if (!fileInput) { alert("No file selected."); return; }
+            let formData = new FormData();
+            formData.append("file", fileInput);
+
+            fetch("/upload", { method: "POST", body: formData })
+                .then(response => response.json())
+                .then(data => { 
+                    console.log("Upload response:", data);  
+                    alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); 
+                    setTimeout(startProcessing, 1000); 
+                })
+                .catch(error => console.error("❌ Upload Error:", error));
+        }
+
+        function startProcessing() {
+            let venueAddress = prompt("Enter venue address:");
+            if (!venueAddress || venueAddress.trim() === "") { 
+                alert("No address provided. Cannot proceed."); 
+                return; 
+            }
+
+            console.log("📩 Sending venue address:", venueAddress);
+
+            fetch("/generate_polygons", { 
+                method: "POST", 
+                headers: { "Content-Type": "application/json" }, 
+                body: JSON.stringify({ venue_address: venueAddress }) 
+            })
+            .then(response => response.json())
+            .then(data => { 
+                console.log("Processing response:", data);
+                if (data.status === "completed") {
+                    alert("✅ GeoJSON generated successfully! Click Download.");
+                    document.getElementById("downloadButton").style.display = "block";
+                } else {
+                    alert("❌ Error generating polygons: " + data.message);
+                }
+            })
+            .catch(error => console.error("❌ Processing Error:", error));
+        }
+
+        function downloadGeoJSON() {
+            window.location.href = "/download";
+        }
+    </script>
 </body>
 </html>
