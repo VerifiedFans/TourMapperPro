@@ -4,50 +4,54 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapper Pro</title>
-    <script>
-        function uploadFile() {
-            let fileInput = document.getElementById("fileInput").files[0];
-            if (!fileInput) { alert("No file selected."); return; }
-            let formData = new FormData();
-            formData.append("file", fileInput);
+<script>
+    function uploadFile() {
+        let fileInput = document.getElementById("fileInput").files[0];
+        if (!fileInput) { alert("No file selected."); return; }
+        let formData = new FormData();
+        formData.append("file", fileInput);
 
-            fetch("/upload", { method: "POST", body: formData })
-                .then(response => response.json())
-                .then(data => { 
-                    console.log("Upload response:", data);  
-                    alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); 
-                    startProcessing();
-                })
-                .catch(error => console.error("❌ Upload Error:", error));
-        }
-
-        function startProcessing() {
-            let venueAddress = prompt("Enter venue address:");
-            if (!venueAddress) { alert("No address provided."); return; }
-
-            console.log("📩 Sending venue address:", venueAddress);
-
-            fetch("/generate_polygons", { 
-                method: "POST", 
-                headers: { "Content-Type": "application/json" }, 
-                body: JSON.stringify({ venue_address: venueAddress }) 
-            })
+        fetch("/upload", { method: "POST", body: formData })
             .then(response => response.json())
             .then(data => { 
-                console.log("Processing response:", data);
-                if (data.status === "completed") {
-                    document.getElementById("downloadButton").style.display = "block";
-                } else {
-                    alert("❌ Error generating polygons: " + data.message);
-                }
+                console.log("Upload response:", data);  
+                alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); 
+                startProcessing(); // 🛠️ Automatically trigger address input
             })
-            .catch(error => console.error("❌ Processing Error:", error));
+            .catch(error => console.error("❌ Upload Error:", error));
+    }
+
+    function startProcessing() {
+        let venueAddress = prompt("Enter venue address:");
+        if (!venueAddress) { 
+            alert("No address provided."); 
+            return; 
         }
 
-        function downloadGeoJSON() {
-            window.location.href = "/download";
-        }
-    </script>
+        console.log("📩 Sending venue address:", venueAddress);
+
+        fetch("/generate_polygons", { 
+            method: "POST", 
+            headers: { "Content-Type": "application/json" }, 
+            body: JSON.stringify({ venue_address: venueAddress }) 
+        })
+        .then(response => response.json())
+        .then(data => { 
+            console.log("Processing response:", data);
+            if (data.status === "completed") {
+                document.getElementById("downloadButton").style.display = "block";
+            } else {
+                alert("❌ Error generating polygons: " + data.message);
+            }
+        })
+        .catch(error => console.error("❌ Processing Error:", error));
+    }
+
+    function downloadGeoJSON() {
+        window.location.href = "/download";
+    }
+</script>
+
 </head>
 <body>
     <h1>TourMapper Pro</h1>
