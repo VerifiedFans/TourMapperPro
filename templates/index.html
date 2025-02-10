@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -39,9 +40,8 @@
             fetch("/upload", { method: "POST", body: formData })
                 .then(response => response.json())
                 .then(data => { 
-                    console.log("Upload response:", data);  
                     alert(data.status === 'completed' ? "Upload Successful!" : "Upload Failed!"); 
-                    setTimeout(startProcessing, 1000); 
+                    setTimeout(startProcessing, 1000);
                 })
                 .catch(error => console.error("❌ Upload Error:", error));
         }
@@ -53,8 +53,6 @@
                 return; 
             }
 
-            console.log("📩 Sending venue address:", venueAddress);
-
             fetch("/generate_polygons", { 
                 method: "POST", 
                 headers: { "Content-Type": "application/json" }, 
@@ -62,12 +60,11 @@
             })
             .then(response => response.json())
             .then(data => { 
-                console.log("Processing response:", data);
                 if (data.status === "completed") {
-                    alert("✅ GeoJSON generated successfully! Click Download.");
+                    alert("✅ GeoJSON ready! Click Download.");
                     document.getElementById("downloadButton").style.display = "block";
                 } else {
-                    alert("❌ Error generating polygons: " + data.message);
+                    alert("❌ Error: " + data.message);
                 }
             })
             .catch(error => console.error("❌ Processing Error:", error));
