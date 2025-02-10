@@ -1,4 +1,3 @@
-
 import os
 import json
 import logging
@@ -9,7 +8,7 @@ from werkzeug.utils import secure_filename
 # ✅ Define Flask app with template/static folders
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-# Setup logging for debugging
+# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -21,13 +20,13 @@ progress_status = {"progress": 0}  # Track processing progress
 
 @app.route("/")
 def home():
-    """ ✅ Fix: Render the frontend page properly. """
+    """ ✅ Serve the homepage (index.html) """
     logger.info("✅ Serving homepage (index.html)")
     return render_template("index.html")
 
 @app.route("/upload", methods=["POST"])
 def upload_csv():
-    """ ✅ Handles CSV file upload and logs success/failure. """
+    """ ✅ Handles CSV file upload """
     if "file" not in request.files:
         logger.error("❌ No file part in request")
         return jsonify({"status": "error", "message": "No file part"}), 400
@@ -51,7 +50,7 @@ def generate_polygons():
     progress_status["progress"] = 10  
 
     data = request.json
-    logger.info(f"📩 Received data in /generate_polygons: {data}")  # ✅ Log request data
+    logger.info(f"📩 Received data in /generate_polygons: {data}")
 
     if not data or "venue_address" not in data:
         logger.error("❌ Missing venue address in request!")
@@ -88,6 +87,44 @@ def download_geojson():
     if os.path.exists(GEOJSON_STORAGE):
         return send_file(GEOJSON_STORAGE, as_attachment=True, mimetype="application/json")
     return jsonify({"status": "error", "message": "No GeoJSON file available"}), 404
+
+def geocode_address(address):
+    """ ✅ Convert an address to latitude & longitude using Google API & OpenStreetMap fallback """
+    GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+
+    if GOOGLE_MAPS_API_KEY:
+        url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={GOOGLE_MAPS_API_KEY}"
+        try:
+            response = requests.get(url, timeout=5)
+            data = response.json()
+            logger.info(f"📩 Google API Response: {data}")
+
+            if data.get("status") == "OK":
+                location = data["results"][0]["geometry"]["location"]
+                logger.info(f"✅ Google Geocode Success: {location['lat']}, {location['lng']}")
+                return location["lat"], location["lng"]
+            else:
+                logger.warning(f"⚠️ Google API failed: {data.get('status')} - {data.get('error_message')}")
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"⚠️ Google API request failed: {e}")
+
+    # ✅ If Google fails, try OpenStreetMap (OSM)
+    logger.info("🔄 Trying OpenStreetMap (Nominatim) as backup...")
+    try:
+        osm_url = f"https://nominatim.openstreetmap.org/search?q={address}&format=json&limit=1"
+        response = requests.get(osm_url, headers={"User-Agent": "TourMapperApp"}, timeout=5)
+        data = response.json()
+
+        if data:
+            lat, lon = float(data[0]["lat"]), float(data[0]["lon"])
+            logger.info(f"✅ OSM Geocode Success: {lat}, {lon}")
+            return lat, lon
+        else:
+            logger.error("❌ OpenStreetMap failed to find coordinates")
+            return None, None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ OpenStreetMap request failed: {e}")
+        return None, None
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
