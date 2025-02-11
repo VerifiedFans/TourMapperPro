@@ -70,11 +70,17 @@ def get_lat_lon(address):
 # ----------------- GENERATING GEOJSON POLYGONS ----------------- #
 
 def generate_venue_polygon(lat, lon):
-    """Generates a polygon around the venue and parking lot."""
+    """Generates a square polygon around the venue."""
     buffer_distance = 0.001  # Approx 100 meters
 
-    point = Point(lon, lat)
-    polygon = point.buffer(buffer_distance)  # Creates a circular buffer
+    # Define a simple square around the venue
+    polygon = Polygon([
+        (lon - buffer_distance, lat - buffer_distance),
+        (lon + buffer_distance, lat - buffer_distance),
+        (lon + buffer_distance, lat + buffer_distance),
+        (lon - buffer_distance, lat + buffer_distance),
+        (lon - buffer_distance, lat - buffer_distance)
+    ])
 
     return polygon
 
@@ -89,7 +95,10 @@ def create_geojson(venues):
             
             features.append({
                 "type": "Feature",
-                "geometry": json.loads(gpd.GeoSeries([polygon]).to_json())["features"][0]["geometry"],
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [list(polygon.exterior.coords)]
+                },
                 "properties": {
                     "name": venue["venue_name"],
                     "address": venue["address"],
@@ -99,6 +108,7 @@ def create_geojson(venues):
 
     geojson_data = {"type": "FeatureCollection", "features": features}
 
+    # Save GeoJSON to a file
     with open(GEOJSON_STORAGE, "w") as geojson_file:
         json.dump(geojson_data, geojson_file)
 
