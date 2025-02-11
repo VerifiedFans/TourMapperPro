@@ -2,9 +2,8 @@ import os
 import json
 import requests
 import logging
-import pandas as pd
 import geopandas as gpd
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Polygon, Point
 from flask import Flask, request, jsonify, send_file, render_template
 from bs4 import BeautifulSoup
 from geopy.geocoders import Nominatim
@@ -32,7 +31,7 @@ def scrape_past_events(artist_url):
     soup = BeautifulSoup(response.text, "html.parser")
     
     events = []
-    event_containers = soup.find_all("div", class_="event-card")  # Adjust selector based on the website structure
+    event_containers = soup.find_all("div", class_="event-card")  # Adjust selector based on actual structure
 
     for event in event_containers:
         date = event.find("div", class_="event-date").text.strip()
@@ -70,10 +69,10 @@ def get_lat_lon(address):
 # ----------------- GENERATING GEOJSON POLYGONS ----------------- #
 
 def generate_venue_polygon(lat, lon):
-    """Generates a square polygon around the venue."""
+    """Generates a polygon around the venue & parking lot."""
     buffer_distance = 0.001  # Approx 100 meters
 
-    # Define a simple square around the venue
+    # Create a square polygon around the venue
     polygon = Polygon([
         (lon - buffer_distance, lat - buffer_distance),
         (lon + buffer_distance, lat - buffer_distance),
@@ -85,7 +84,7 @@ def generate_venue_polygon(lat, lon):
     return polygon
 
 def create_geojson(venues):
-    """Converts venue data into GeoJSON format."""
+    """Converts venue data into a valid GeoJSON format."""
     features = []
 
     for venue in venues:
@@ -108,7 +107,7 @@ def create_geojson(venues):
 
     geojson_data = {"type": "FeatureCollection", "features": features}
 
-    # Save GeoJSON to a file
+    # Save GeoJSON file
     with open(GEOJSON_STORAGE, "w") as geojson_file:
         json.dump(geojson_data, geojson_file)
 
