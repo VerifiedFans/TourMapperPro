@@ -1,177 +1,140 @@
 import os
 import json
-import logging
-import redis
 import requests
+import logging
 import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Point, Polygon
 from flask import Flask, request, jsonify, send_file, render_template
-from werkzeug.utils import secure_filename
+from bs4 import BeautifulSoup
+from geopy.geocoders import Nominatim
 
-# Setup logging
+# Initialize Flask app
+app = Flask(__name__)
+
+# File storage
+GEOJSON_STORAGE = "data.geojson"
+
+# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__, template_folder="templates", static_folder="static")
+# ----------------- SCRAPING ARTIST EVENTS ----------------- #
 
-import redis
-import os
+def scrape_past_events(artist_url):
+    """Scrapes past event details for 2024 from the artist's event page."""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(artist_url, headers=headers)
 
-REDIS_URL = os.getenv("REDIS_URL")
+    if response.status_code != 200:
+        return {"error": "Failed to fetch artist page"}
 
-redis_client = None  # Default to None if Redis is not available
-if REDIS_URL:
-    try:
-        redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-        redis_client.ping()  # Test the connection
-        print("✅ Connected to Redis!")
-    except redis.exceptions.ConnectionError as e:
-        print(f"⚠️ Redis connection failed: {e}")
-        redis_client = None  # Prevents crashes
+    soup = BeautifulSoup(response.text, "html.parser")
+    
+    events = []
+    event_containers = soup.find_all("div", class_="event-card")  # Adjust selector based on the website structure
 
-# File Storage
-UPLOAD_FOLDER = "/tmp"
-GEOJSON_STORAGE = "data.geojson"
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+    for event in event_containers:
+        date = event.find("div", class_="event-date").text.strip()
+        
+        if "2024" in date:
+            venue_name = event.find("div", class_="venue-name").text.strip()
+            address = event.find("div", class_="venue-address").text.strip()
+            city = event.find("div", class_="venue-city").text.strip()
+            state = event.find("div", class_="venue-state").text.strip()
+            zip_code = event.find("div", class_="venue-zip").text.strip()
+            event_url = event.find("a", class_="event-link")["href"]
 
-# API Keys
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+            events.append({
+                "venue_name": venue_name,
+                "address": address,
+                "city": city,
+                "state": state,
+                "zip": zip_code,
+                "date": date,
+                "event_url": event_url
+            })
 
-# --------------- HELPER FUNCTIONS --------------- #
+    return events
 
-def get_lat_lon_google(address):
-    """ Get lat/lon from Google Maps API """
-    if not GOOGLE_API_KEY:
-        logger.warning("⚠️ Google API Key missing. Skipping Google Geocoding.")
-        return None
-
-    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={GOOGLE_API_KEY}"
-    response = requests.get(url).json()
-
-    if response.get("status") == "OK":
-        location = response["results"][0]["geometry"]["location"]
-        return location["lat"], location["lng"]
-    return None
-
-def get_lat_lon_osm(address):
-    """ Get lat/lon from OpenStreetMap API """
-    url = f"https://nominatim.openstreetmap.org/search?q={address}&format=json"
-    response = requests.get(url).json()
-
-    if response and len(response) > 0:
-        return float(response[0]["lat"]), float(response[0]["lon"])
-    return None
-
-def get_lat_lon_geocodexyz(address):
-    """ Get lat/lon from Geocode.xyz API """
-    url = f"https://geocode.xyz/{address}?json=1"
-    response = requests.get(url).json()
-
-    if "latt" in response and "longt" in response:
-        return float(response["latt"]), float(response["longt"])
-    return None
+# ----------------- GEOCODING FUNCTION ----------------- #
 
 def get_lat_lon(address):
-    """ Try different geocoding services in order """
-    lat_lon = get_lat_lon_google(address)
-    if lat_lon:
-        logger.info(f"✅ Google Geocoding successful: {lat_lon}")
-        return lat_lon
-
-    lat_lon = get_lat_lon_osm(address)
-    if lat_lon:
-        logger.info(f"✅ OSM Geocoding successful: {lat_lon}")
-        return lat_lon
-
-    lat_lon = get_lat_lon_geocodexyz(address)
-    if lat_lon:
-        logger.info(f"✅ Geocode.xyz successful: {lat_lon}")
-        return lat_lon
-
-    logger.error(f"❌ Geocoding failed for address: {address}")
+    """Gets latitude and longitude of an address using OpenStreetMap API."""
+    geolocator = Nominatim(user_agent="tourmapper")
+    location = geolocator.geocode(address)
+    if location:
+        return location.latitude, location.longitude
     return None
 
-def generate_geojson(venues):
-    """ Generate GeoJSON from venue locations """
+# ----------------- GENERATING GEOJSON POLYGONS ----------------- #
+
+def generate_venue_polygon(lat, lon):
+    """Generates a polygon around the venue and parking lot."""
+    buffer_distance = 0.001  # Approx 100 meters
+
+    point = Point(lon, lat)
+    polygon = point.buffer(buffer_distance)  # Creates a circular buffer
+
+    return polygon
+
+def create_geojson(venues):
+    """Converts venue data into GeoJSON format."""
     features = []
+
     for venue in venues:
-        if "lat" in venue and "lon" in venue:
+        lat, lon = venue.get("lat"), venue.get("lon")
+        if lat and lon:
+            polygon = generate_venue_polygon(lat, lon)
+            
             features.append({
                 "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [venue["lon"], venue["lat"]]
-                },
+                "geometry": json.loads(gpd.GeoSeries([polygon]).to_json())["features"][0]["geometry"],
                 "properties": {
-                    "name": venue["name"],
-                    "address": venue["address"]
+                    "name": venue["venue_name"],
+                    "address": venue["address"],
+                    "date": venue["date"]
                 }
             })
-    
+
     geojson_data = {"type": "FeatureCollection", "features": features}
-    
+
     with open(GEOJSON_STORAGE, "w") as geojson_file:
         json.dump(geojson_data, geojson_file)
 
     return geojson_data
 
-# --------------- ROUTES --------------- #
+# ----------------- FLASK ROUTES ----------------- #
 
 @app.route("/")
 def home():
-    """ Serve index.html """
+    """Render the home page."""
     return render_template("index.html")
 
-@app.route("/upload", methods=["POST"])
-def upload_csv():
-    """ Handle CSV file upload & geocode venues """
-    if "file" not in request.files:
-        return jsonify({"status": "error", "message": "No file part"}), 400
+@app.route("/scrape_events", methods=["POST"])
+def scrape_events():
+    """Scrapes artist event page and generates GeoJSON."""
+    data = request.json
+    artist_url = data.get("artist_url")
 
-    file = request.files["file"]
-    if file.filename == "":
-        return jsonify({"status": "error", "message": "No selected file"}), 400
+    if not artist_url:
+        return jsonify({"error": "Artist URL is required"}), 400
 
-    filename = secure_filename(file.filename)
-    filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    file.save(filepath)
+    events = scrape_past_events(artist_url)
 
-    # Process CSV
-    try:
-        df = pd.read_csv(filepath)
-        required_columns = {"venue name", "address", "city", "state", "zip", "date"}
-        if not required_columns.issubset(set(df.columns.str.lower())):
-            return jsonify({"status": "error", "message": "CSV missing required columns"}), 400
+    for event in events:
+        full_address = f"{event['address']}, {event['city']}, {event['state']} {event['zip']}"
+        lat_lon = get_lat_lon(full_address)
+        if lat_lon:
+            event["lat"], event["lon"] = lat_lon
 
-        venues = []
-        for _, row in df.iterrows():
-            full_address = f"{row['address']}, {row['city']}, {row['state']} {row['zip']}"
-            lat_lon = get_lat_lon(full_address)
+    geojson_data = create_geojson(events)
 
-            if lat_lon:
-                venue_data = {
-                    "name": row["venue name"],
-                    "address": full_address,
-                    "lat": lat_lon[0],
-                    "lon": lat_lon[1]
-                }
-                venues.append(venue_data)
-
-        # Store results
-        if redis_client:
-            redis_client.set("geojson_data", json.dumps(venues))
-
-        # Generate GeoJSON file
-        geojson_data = generate_geojson(venues)
-
-        return jsonify({"status": "completed", "message": "File processed", "geojson": geojson_data})
-    
-    except Exception as e:
-        logger.error(f"❌ Error processing file: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    return jsonify({"status": "completed", "geojson": geojson_data})
 
 @app.route("/download", methods=["GET"])
 def download_geojson():
-    """ Allows users to download the generated GeoJSON file """
+    """Allows users to download the generated GeoJSON file."""
     if os.path.exists(GEOJSON_STORAGE):
         return send_file(GEOJSON_STORAGE, as_attachment=True, mimetype="application/json")
     return jsonify({"type": "FeatureCollection", "features": []})
