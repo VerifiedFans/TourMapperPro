@@ -7,43 +7,75 @@
     <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=initMap" async defer></script>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
     <style>
-        #map { height: 500px; width: 100%; }
+        #map { height: 500px; width: 100%; margin-bottom: 20px; }
+        #drop-area {
+            border: 2px dashed #ccc;
+            padding: 20px;
+            text-align: center;
+            font-size: 18px;
+            cursor: pointer;
+            background-color: #f9f9f9;
+            margin-bottom: 20px;
+        }
+        #drop-area.dragover { background-color: #e9e9e9; }
+        #file-input { display: none; }
         button { margin: 10px; padding: 10px; font-size: 16px; }
     </style>
 </head>
 <body>
     <h1>TourMapperPro</h1>
+
+    <div id="drop-area">
+        <p>Drag & Drop an Event Page File Here or Click to Upload</p>
+        <input type="file" id="file-input" accept=".txt,.csv,.json">
+    </div>
+
     <div id="map"></div>
     <button onclick="downloadGeoJSON()">Download GeoJSON</button>
 
     <script>
-        function initMap() {
-            const venueCoords = { lat: 40.7505045, lng: -73.9934387 };
-            const parkingCoords = { lat: 40.7488933, lng: -73.9899767 };
+        document.addEventListener("DOMContentLoaded", function () {
+            const dropArea = document.getElementById("drop-area");
+            const fileInput = document.getElementById("file-input");
 
-            const map = new google.maps.Map(document.getElementById("map"), {
-                zoom: 15,
-                center: venueCoords,
+            dropArea.addEventListener("click", () => fileInput.click());
+
+            fileInput.addEventListener("change", function (event) {
+                handleFiles(event.target.files);
             });
 
-            const polygonCoords = [
-                venueCoords,
-                { lat: venueCoords.lat - 0.001, lng: venueCoords.lng + 0.001 },
-                { lat: parkingCoords.lat - 0.001, lng: parkingCoords.lng - 0.001 },
-                { lat: parkingCoords.lat + 0.001, lng: parkingCoords.lng + 0.001 },
-            ];
-
-            const polygon = new google.maps.Polygon({
-                paths: polygonCoords,
-                strokeColor: "#FF0000",
-                strokeOpacity: 0.8,
-                strokeWeight: 2,
-                fillColor: "#FF0000",
-                fillOpacity: 0.35,
+            dropArea.addEventListener("dragover", function (event) {
+                event.preventDefault();
+                dropArea.classList.add("dragover");
             });
 
-            polygon.setMap(map);
-        }
+            dropArea.addEventListener("dragleave", function () {
+                dropArea.classList.remove("dragover");
+            });
+
+            dropArea.addEventListener("drop", function (event) {
+                event.preventDefault();
+                dropArea.classList.remove("dragover");
+                handleFiles(event.dataTransfer.files);
+            });
+
+            function handleFiles(files) {
+                if (files.length > 0) {
+                    const formData = new FormData();
+                    formData.append("file", files[0]);
+
+                    fetch("/upload", {
+                        method: "POST",
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        alert(data.message);
+                    })
+                    .catch(error => console.error("Error:", error));
+                }
+            }
+        });
 
         function downloadGeoJSON() {
             fetch('/download_geojson')
