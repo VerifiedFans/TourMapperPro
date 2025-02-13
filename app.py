@@ -1,10 +1,12 @@
-from flask import Flask, render_template, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file
 import json
 import os
 
 app = Flask(__name__)
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Sample venue & parking coordinates
+# Venue & Parking Sample Coordinates
 venue_coords = {"lat": 40.7505045, "lng": -73.9934387}
 parking_coords = {"lat": 40.7488933, "lng": -73.9899767}
 
@@ -12,8 +14,23 @@ parking_coords = {"lat": 40.7488933, "lng": -73.9899767}
 def home():
     return render_template('index.html')
 
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({"message": "No file uploaded"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"message": "No file selected"}), 400
+
+    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+    file.save(file_path)
+    
+    return jsonify({"message": f"File '{file.filename}' uploaded successfully"}), 200
+
 @app.route('/get_geojson')
 def get_geojson():
+    """ Generate GeoJSON dynamically and return it """
     polygon_points = [
         [venue_coords["lng"], venue_coords["lat"]],
         [parking_coords["lng"], parking_coords["lat"]],
@@ -37,6 +54,7 @@ def get_geojson():
         ]
     }
 
+    # Save GeoJSON to a file
     with open("polygon.geojson", "w") as f:
         json.dump(geojson_data, f)
 
@@ -44,6 +62,7 @@ def get_geojson():
 
 @app.route('/download_geojson')
 def download_geojson():
+    """ Send the GeoJSON file for download """
     return send_file("polygon.geojson", as_attachment=True)
 
 if __name__ == '__main__':
