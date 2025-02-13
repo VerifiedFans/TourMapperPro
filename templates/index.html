@@ -1,50 +1,62 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TourMapper Pro</title>
+    <title>TourMapperPro</title>
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=initMap" async defer></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-        .input-group { margin: 10px 0; }
-        button { padding: 10px; margin-top: 10px; cursor: pointer; }
-        #downloadButton { display: none; }
+        #map { height: 500px; width: 100%; }
+        button { margin: 10px; padding: 10px; font-size: 16px; }
     </style>
 </head>
 <body>
-    <h1>TourMapper Pro</h1>
-
-    <h3>Enter Artist Event Page URL</h3>
-    <input type="text" id="artistUrl" placeholder="Enter artist event page URL">
-    <button onclick="scrapeEvents()">Get Events</button>
-
-    <button id="downloadButton" onclick="downloadGeoJSON()">Download GeoJSON</button>
+    <h1>TourMapperPro</h1>
+    <div id="map"></div>
+    <button onclick="downloadGeoJSON()">Download GeoJSON</button>
 
     <script>
-        function scrapeEvents() {
-            let artistUrl = document.getElementById("artistUrl").value;
-            if (!artistUrl) { alert("Enter an artist event page URL"); return; }
+        function initMap() {
+            const venueCoords = { lat: 40.7505045, lng: -73.9934387 };
+            const parkingCoords = { lat: 40.7488933, lng: -73.9899767 };
 
-            fetch("/scrape_events", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ artist_url: artistUrl })
-            })
-            .then(response => response.json())
-            .then(data => { 
-                if (data.status === "completed") {
-                    alert("✅ GeoJSON ready! Click Download.");
-                    document.getElementById("downloadButton").style.display = "block";
-                } else {
-                    alert("❌ Error: " + data.error);
-                }
-            })
-            .catch(error => console.error("❌ Processing Error:", error));
+            const map = new google.maps.Map(document.getElementById("map"), {
+                zoom: 15,
+                center: venueCoords,
+            });
+
+            const polygonCoords = [
+                venueCoords,
+                { lat: venueCoords.lat - 0.001, lng: venueCoords.lng + 0.001 },
+                { lat: parkingCoords.lat - 0.001, lng: parkingCoords.lng - 0.001 },
+                { lat: parkingCoords.lat + 0.001, lng: parkingCoords.lng + 0.001 },
+            ];
+
+            const polygon = new google.maps.Polygon({
+                paths: polygonCoords,
+                strokeColor: "#FF0000",
+                strokeOpacity: 0.8,
+                strokeWeight: 2,
+                fillColor: "#FF0000",
+                fillOpacity: 0.35,
+            });
+
+            polygon.setMap(map);
         }
 
         function downloadGeoJSON() {
-            window.location.href = "/download";
+            fetch('/download_geojson')
+                .then(response => response.blob())
+                .then(blob => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'polygon.geojson';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                });
         }
     </script>
 </body>
