@@ -4,97 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TourMapperPro</title>
-    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=initMap" async defer></script>
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY"></script>
+    <script src="{{ url_for('static', filename='fetchGeoJson.js') }}"></script>
     <style>
-        #map { height: 500px; width: 100%; margin-bottom: 20px; }
-        #drop-area {
-            border: 2px dashed #ccc;
-            padding: 20px;
-            text-align: center;
-            font-size: 18px;
-            cursor: pointer;
-            background-color: #f9f9f9;
-            margin-bottom: 20px;
-        }
-        #drop-area.dragover { background-color: #e9e9e9; }
-        #file-input { display: none; }
-        button { margin: 10px; padding: 10px; font-size: 16px; }
+        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+        input, button { padding: 10px; margin: 5px; font-size: 16px; }
     </style>
 </head>
 <body>
     <h1>TourMapperPro</h1>
 
-    <div id="drop-area">
-        <p>Drag & Drop an Event Page File Here or Click to Upload</p>
-        <input type="file" id="file-input" accept=".txt,.csv,.json">
-    </div>
-
-    <div id="map"></div>
+    <input type="text" id="address-input" placeholder="Enter Venue Address">
+    <button onclick="getGeoJson()">Generate GeoJSON</button>
     <button onclick="downloadGeoJSON()">Download GeoJSON</button>
 
-    <script>
-        document.addEventListener("DOMContentLoaded", function () {
-            console.log("🚀 Page loaded: Initializing File Upload");
-
-            const dropArea = document.getElementById("drop-area");
-            const fileInput = document.getElementById("file-input");
-
-            dropArea.addEventListener("click", () => fileInput.click());
-
-            fileInput.addEventListener("change", function (event) {
-                handleFiles(event.target.files);
-            });
-
-            dropArea.addEventListener("dragover", function (event) {
-                event.preventDefault();
-                dropArea.classList.add("dragover");
-            });
-
-            dropArea.addEventListener("dragleave", function () {
-                dropArea.classList.remove("dragover");
-            });
-
-            dropArea.addEventListener("drop", function (event) {
-                event.preventDefault();
-                dropArea.classList.remove("dragover");
-                handleFiles(event.dataTransfer.files);
-            });
-
-            function handleFiles(files) {
-                if (files.length > 0) {
-                    console.log("📂 File selected:", files[0].name);
-
-                    const formData = new FormData();
-                    formData.append("file", files[0]);
-
-                    fetch("/upload", {
-                        method: "POST",
-                        body: formData
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log("✅ Upload Response:", data);
-                        alert(data.message);
-                    })
-                    .catch(error => console.error("🚨 Upload Error:", error));
-                }
-            }
-        });
-
-        function downloadGeoJSON() {
-            fetch('/download_geojson')
-                .then(response => response.blob())
-                .then(blob => {
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = 'polygon.geojson';
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                });
-        }
-    </script>
 </body>
 </html>
