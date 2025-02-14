@@ -1,117 +1,112 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-import requests
-import geojson
+import os
 import json
-from shapely.geometry import Polygon
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import googlemaps
+from geopy.geocoders import Nominatim
+from geopy.exc import GeocoderTimedOut
 
-# Replace with your actual Google Maps API Key
-GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_API_KEY"
+# Initialize Flask app
+app = Flask(__name__)
+CORS(app)  # Enable CORS
 
-app = FastAPI()
+# Load Google Maps API Key from environment variable
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
 
-# Serve static files (like CSS)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Initialize Geopy geocoder
+geolocator = Nominatim(user_agent="geojson_app")
 
-# Home page with the form
-@app.get("/", response_class=HTMLResponse)
-async def home():
-    return """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>GeoJSON Generator</title>
-        <script>
-            async function generateGeoJSON() {
-                let address = document.getElementById("address").value;
-                let response = await fetch("/generate-geojson", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ address: address })
-                });
+@app.route("/")
+def home():
+    return jsonify({"message": "Welcome to the GeoJSON API"}), 200
 
-                let result = await response.json();
-                if (result.file) {
-                    document.getElementById("download-link").style.display = "block";
-                } else {
-                    alert("Error: " + result.error);
-                }
+@app.route("/geocode", methods=["POST"])
+def geocode():
+    """
+    Geocodes an address using Google Maps API.
+    """
+    try:
+        data = request.get_json()
+        address = data.get("address")
+
+        if not address:
+            return jsonify({"error": "No address provided"}), 400
+
+        result = gmaps.geocode(address)
+        if not result:
+            return jsonify({"error": "Address not found"}), 404
+
+        location = result[0]["geometry"]["location"]
+        return jsonify({
+            "address": result[0]["formatted_address"],
+            "latitude": location["lat"],
+            "longitude": location["lng"]
+        }), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/reverse-geocode", methods=["POST"])
+def reverse_geocode():
+    """
+    Reverse geocodes a lat/lon using geopy.
+    """
+    try:
+        data = request.get_json()
+        lat = data.get("latitude")
+        lon = data.get("longitude")
+
+        if not lat or not lon:
+            return jsonify({"error": "Latitude and longitude required"}), 400
+
+        try:
+            location = geolocator.reverse((lat, lon), exactly_one=True)
+            if location is None:
+                return jsonify({"error": "Location not found"}), 404
+
+            return jsonify({"address": location.address}), 200
+
+        except GeocoderTimedOut:
+            return jsonify({"error": "Geocoding service timed out"}), 500
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/generate-geojson", methods=["POST"])
+def generate_geojson():
+    """
+    Converts an address into GeoJSON format.
+    """
+    try:
+        data = request.get_json()
+        address = data.get("address")
+
+        if not address:
+            return jsonify({"error": "No address provided"}), 400
+
+        result = gmaps.geocode(address)
+        if not result:
+            return jsonify({"error": "Address not found"}), 404
+
+        location = result[0]["geometry"]["location"]
+
+        geojson = {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [location["lng"], location["lat"]]
+            },
+            "properties": {
+                "address": result[0]["formatted_address"]
             }
-        </script>
-    </head>
-    <body>
-        <h1>Enter Address to Generate GeoJSON</h1>
-        <input type="text" id="address" placeholder="Enter Address">
-        <button onclick="generateGeoJSON()">Generate</button>
-        <br><br>
-        <a id="download-link" href="/download-geojson" style="display: none;">Download GeoJSON</a>
-    </body>
-    </html>
-    """
+        }
 
-# Function to get latitude & longitude from Google Maps API
-def get_coordinates(address):
-    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={GOOGLE_MAPS_API_KEY}"
-    response = requests.get(url).json()
-    if response["status"] == "OK":
-        location = response["results"][0]["geometry"]["location"]
-        return location["lat"], location["lng"]
-    return None
+        return jsonify(geojson), 200
 
-# Function to get building footprint from OpenStreetMap
-def get_building_footprint(lat, lng):
-    overpass_url = "http://overpass-api.de/api/interpreter"
-    query = f"""
-    [out:json];
-    way(around:50,{lat},{lng})["building"];
-    out geom;
-    """
-    response = requests.get(overpass_url, params={"data": query}).json()
-    
-    if "elements" in response and response["elements"]:
-        for element in response["elements"]:
-            if "geometry" in element:
-                return [(p["lon"], p["lat"]) for p in element["geometry"]]
-    
-    return None
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-# Function to generate a GeoJSON file
-def create_geojson(coords, output_file="building.geojson"):
-    polygon = Polygon(coords)
-    feature = geojson.Feature(geometry=polygon, properties={})
-    feature_collection = geojson.FeatureCollection([feature])
-
-    with open(output_file, "w") as f:
-        json.dump(feature_collection, f, indent=2)
-
-    return output_file
-
-# API Route: Generate GeoJSON
-@app.post("/generate-geojson")
-async def generate_geojson_file(request: Request):
-    data = await request.json()
-    address = data.get("address")
-
-    # Get coordinates
-    coords = get_coordinates(address)
-    if not coords:
-        return JSONResponse(content={"error": "Address not found"}, status_code=400)
-
-    # Get building footprint
-    footprint = get_building_footprint(*coords)
-    if not footprint:
-        return JSONResponse(content={"error": "No building footprint found"}, status_code=404)
-
-    # Create GeoJSON
-    geojson_file = create_geojson(footprint)
-
-    return JSONResponse(content={"file": geojson_file})
-
-# API Route: Download GeoJSON
-@app.get("/download-geojson")
-async def download_geojson():
-    return FileResponse("building.geojson", media_type="application/json", filename="building.geojson")
+if __name__ == "__main__":
+    app.run(debug=True)
   
