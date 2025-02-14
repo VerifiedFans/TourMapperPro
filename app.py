@@ -1,108 +1,117 @@
-import os
-import json
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 import requests
-from flask import Flask, render_template, request, jsonify, send_file
-from werkzeug.utils import secure_filename
-from flask_cors import CORS
+import geojson
+import json
+from shapely.geometry import Polygon
 
-# Initialize Flask app
-app = Flask(__name__)
-CORS(app)
+# Replace with your actual Google Maps API Key
+GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_API_KEY"
 
-GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")  # Make sure this is set in Heroku ENV variables
+app = FastAPI()
 
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+# Serve static files (like CSS)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Function to get Place ID from an address
-def get_place_id(address):
-    url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
-    params = {
-        "input": address,
-        "inputtype": "textquery",
-        "fields": "place_id",
-        "key": GOOGLE_MAPS_API_KEY,
-    }
-    response = requests.get(url, params=params).json()
-    candidates = response.get("candidates", [])
-    return candidates[0]["place_id"] if candidates else None
+# Home page with the form
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>GeoJSON Generator</title>
+        <script>
+            async function generateGeoJSON() {
+                let address = document.getElementById("address").value;
+                let response = await fetch("/generate-geojson", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ address: address })
+                });
 
-# Function to get building footprint (polygon) using Place ID
-def get_building_footprint(place_id):
-    url = "https://maps.googleapis.com/maps/api/place/details/json"
-    params = {
-        "place_id": place_id,
-        "fields": "geometry",
-        "key": GOOGLE_MAPS_API_KEY,
-    }
-    response = requests.get(url, params=params).json()
+                let result = await response.json();
+                if (result.file) {
+                    document.getElementById("download-link").style.display = "block";
+                } else {
+                    alert("Error: " + result.error);
+                }
+            }
+        </script>
+    </head>
+    <body>
+        <h1>Enter Address to Generate GeoJSON</h1>
+        <input type="text" id="address" placeholder="Enter Address">
+        <button onclick="generateGeoJSON()">Generate</button>
+        <br><br>
+        <a id="download-link" href="/download-geojson" style="display: none;">Download GeoJSON</a>
+    </body>
+    </html>
+    """
 
-    geometry = response.get("result", {}).get("geometry", {})
-    location = geometry.get("location", {})
+# Function to get latitude & longitude from Google Maps API
+def get_coordinates(address):
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={GOOGLE_MAPS_API_KEY}"
+    response = requests.get(url).json()
+    if response["status"] == "OK":
+        location = response["results"][0]["geometry"]["location"]
+        return location["lat"], location["lng"]
+    return None
 
-    # Use viewport to generate a simple building footprint
-    if "viewport" in geometry:
-        bounds = geometry["viewport"]
-        footprint = {
-            "type": "Polygon",
-            "coordinates": [[
-                [bounds["southwest"]["lng"], bounds["southwest"]["lat"]],
-                [bounds["northeast"]["lng"], bounds["southwest"]["lat"]],
-                [bounds["northeast"]["lng"], bounds["northeast"]["lat"]],
-                [bounds["southwest"]["lng"], bounds["northeast"]["lat"]],
-                [bounds["southwest"]["lng"], bounds["southwest"]["lat"]],
-            ]]
-        }
-    else:
-        footprint = {
-            "type": "Point",
-            "coordinates": [location["lng"], location["lat"]]
-        }
+# Function to get building footprint from OpenStreetMap
+def get_building_footprint(lat, lng):
+    overpass_url = "http://overpass-api.de/api/interpreter"
+    query = f"""
+    [out:json];
+    way(around:50,{lat},{lng})["building"];
+    out geom;
+    """
+    response = requests.get(overpass_url, params={"data": query}).json()
+    
+    if "elements" in response and response["elements"]:
+        for element in response["elements"]:
+            if "geometry" in element:
+                return [(p["lon"], p["lat"]) for p in element["geometry"]]
+    
+    return None
 
-    return footprint
+# Function to generate a GeoJSON file
+def create_geojson(coords, output_file="building.geojson"):
+    polygon = Polygon(coords)
+    feature = geojson.Feature(geometry=polygon, properties={})
+    feature_collection = geojson.FeatureCollection([feature])
 
-@app.route("/")
-def home():
-    return render_template("index.html")
+    with open(output_file, "w") as f:
+        json.dump(feature_collection, f, indent=2)
 
-@app.route("/generate_geojson", methods=["POST"])
-def generate_geojson():
-    data = request.json
+    return output_file
+
+# API Route: Generate GeoJSON
+@app.post("/generate-geojson")
+async def generate_geojson_file(request: Request):
+    data = await request.json()
     address = data.get("address")
 
-    if not address:
-        return jsonify({"error": "No address provided"}), 400
+    # Get coordinates
+    coords = get_coordinates(address)
+    if not coords:
+        return JSONResponse(content={"error": "Address not found"}, status_code=400)
 
-    place_id = get_place_id(address)
-    if not place_id:
-        return jsonify({"error": "Place not found"}), 404
+    # Get building footprint
+    footprint = get_building_footprint(*coords)
+    if not footprint:
+        return JSONResponse(content={"error": "No building footprint found"}, status_code=404)
 
-    footprint = get_building_footprint(place_id)
-    geojson_data = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": footprint,
-                "properties": {"address": address}
-            }
-        ]
-    }
+    # Create GeoJSON
+    geojson_file = create_geojson(footprint)
 
-    geojson_path = os.path.join(UPLOAD_FOLDER, "building.geojson")
-    with open(geojson_path, "w") as geojson_file:
-        json.dump(geojson_data, geojson_file)
+    return JSONResponse(content={"file": geojson_file})
 
-    return jsonify({"message": "GeoJSON generated", "geojson_file": "building.geojson"}), 200
-
-@app.route("/download_geojson")
-def download_geojson():
-    geojson_path = os.path.join(UPLOAD_FOLDER, "building.geojson")
-    if os.path.exists(geojson_path):
-        return send_file(geojson_path, as_attachment=True)
-    return jsonify({"message": "GeoJSON file not found"}), 404
-
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
+# API Route: Download GeoJSON
+@app.get("/download-geojson")
+async def download_geojson():
+    return FileResponse("building.geojson", media_type="application/json", filename="building.geojson")
+  
