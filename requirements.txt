@@ -1,4 +1,4 @@
-Flask>=3.0.0
+Flask>=2.2.5
 Flask-WTF>=1.1.1
 MarkupSafe>=2.1.0
 requests==2.31.0
@@ -11,14 +11,13 @@ googlemaps==4.10.0
 flask-cors==4.0.0
 selenium>=4.5.0
 webdriver-manager==4.0.1
-geopandas==0.12.2
+geopandas==0.14.0
 geojson==2.5.0
 celery==5.4.0
 redis==5.0.1
 flask-dropzone==1.5.4
 numpy==1.24.0
-flask-redis==0.4.0
+flask-redis-py==0.5.0
 flask-sqlalchemy==3.0.0
-flask-wtf==1.1.1
 pandas==1.5.2
 boto3==1.26.0
