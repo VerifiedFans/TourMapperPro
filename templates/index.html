@@ -35,6 +35,8 @@
 
     <script>
         document.addEventListener("DOMContentLoaded", function () {
+            console.log("🚀 Page loaded: Initializing File Upload");
+
             const dropArea = document.getElementById("drop-area");
             const fileInput = document.getElementById("file-input");
 
@@ -61,6 +63,8 @@
 
             function handleFiles(files) {
                 if (files.length > 0) {
+                    console.log("📂 File selected:", files[0].name);
+
                     const formData = new FormData();
                     formData.append("file", files[0]);
 
@@ -70,9 +74,10 @@
                     })
                     .then(response => response.json())
                     .then(data => {
+                        console.log("✅ Upload Response:", data);
                         alert(data.message);
                     })
-                    .catch(error => console.error("Error:", error));
+                    .catch(error => console.error("🚨 Upload Error:", error));
                 }
             }
         });
