@@ -1,5 +1,5 @@
-Flask>=2.2.5
-Flask-WTF>=1.1.1
+Flask==2.2.5
+Flask-WTF==1.1.1
 MarkupSafe>=2.1.0
 requests==2.31.0
 gunicorn==20.1.0
@@ -17,7 +17,7 @@ celery==5.4.0
 redis==5.0.1
 flask-dropzone==1.5.4
 numpy==1.24.0
-flask-redis-py==0.5.0
+flask-redis==0.4.0  # Fixed (No flask-redis-py)
 flask-sqlalchemy==3.0.0
 pandas==1.5.2
 boto3==1.26.0
