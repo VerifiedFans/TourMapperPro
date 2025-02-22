@@ -6,8 +6,15 @@ from shapely.geometry import Point, Polygon, mapping
 
 app = Flask(__name__)
 
-UPLOAD_FOLDER = "uploads"
-PROCESSED_FOLDER = "processed"
+import os
+
+UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
+PROCESSED_FOLDER = os.path.join(os.getcwd(), "processed")
+
+# Ensure directories exist before saving files
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+
 
 # Only create the folders if they don't exist
 if not os.path.exists(UPLOAD_FOLDER):
