@@ -1,1 +1,2 @@
-web: python geocode_venues.py
+web: gunicorn geocode_venues:app
+
