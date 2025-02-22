@@ -8,8 +8,14 @@ app = Flask(__name__)
 
 UPLOAD_FOLDER = "uploads"
 PROCESSED_FOLDER = "processed"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+
+# Only create the folders if they don't exist
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+if not os.path.exists(PROCESSED_FOLDER):
+    os.makedirs(PROCESSED_FOLDER)
+
 
 # Function to create a polygon around a venue
 def create_polygon(lat, lon, size=0.001):
